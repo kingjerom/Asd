@@ -11,6 +11,7 @@ try {
 }
 const { Server } = require('socket.io');
 const NetworkPhysics = require('./game/networkPhysics.js');
+const MmorpgData = require('./game/mmorpgData.js');
 
 function loadDotEnv(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -98,6 +99,21 @@ function buildingsOverlap(first, second) {
 const parties = new Map();
 const clans = new Map();
 const sessions = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+  for (const [token, data] of sessions) {
+    const time = typeof data === 'object' && data ? data.createdAt : null;
+    if (time && time < cutoff) sessions.delete(token);
+  }
+  if (sessions.size > 10000) {
+    const excess = sessions.size - 10000;
+    let count = 0;
+    for (const key of sessions.keys()) {
+      sessions.delete(key);
+      if (++count >= excess) break;
+    }
+  }
+}, 60 * 60 * 1000).unref();
 const ownerSessions = new Map();
 const ownerSessionTtl = 12 * 60 * 60 * 1000;
 const ownerAuditLog = [];
@@ -162,6 +178,12 @@ const adminConfig = {
   }
 };
 
+function clampRange(value, min, max, fallback = min) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(Math.max(numeric, min), max);
+}
+
 function normalizeMainMenuLayout(layout) {
   const fallback = adminConfig.mainMenuLayout || { portrait: {}, landscape: {} };
   const safe = {
@@ -181,10 +203,10 @@ function normalizeMainMenuLayout(layout) {
       const value = source[key] || target[key];
       if (!value || typeof value !== 'object') continue;
       target[key] = {
-        xPercent: clampNumber(Number(value.xPercent ?? value.x ?? target[key]?.xPercent ?? 50), 0, 100),
-        yPercent: clampNumber(Number(value.yPercent ?? value.y ?? target[key]?.yPercent ?? 50), 0, 100),
-        widthPercent: clampNumber(Number(value.widthPercent ?? value.w ?? target[key]?.widthPercent ?? 20), 8, 100),
-        heightPercent: clampNumber(Number(value.heightPercent ?? value.h ?? target[key]?.heightPercent ?? 20), 8, 100)
+        xPercent: clampRange(Number(value.xPercent ?? value.x ?? target[key]?.xPercent ?? 50), 0, 100),
+        yPercent: clampRange(Number(value.yPercent ?? value.y ?? target[key]?.yPercent ?? 50), 0, 100),
+        widthPercent: clampRange(Number(value.widthPercent ?? value.w ?? target[key]?.widthPercent ?? 20), 8, 100),
+        heightPercent: clampRange(Number(value.heightPercent ?? value.h ?? target[key]?.heightPercent ?? 20), 8, 100)
       };
     }
     safe[mode] = { ...target };
@@ -196,21 +218,16 @@ function normalizeMainMenuLayout(layout) {
       const value = layout[key];
       if (!value || typeof value !== 'object') continue;
       safe.landscape[key] = {
-        xPercent: clampNumber(Number(value.xPercent ?? value.x ?? safe.landscape[key]?.xPercent ?? 50), 0, 100),
-        yPercent: clampNumber(Number(value.yPercent ?? value.y ?? safe.landscape[key]?.yPercent ?? 50), 0, 100),
-        widthPercent: clampNumber(Number(value.widthPercent ?? value.w ?? safe.landscape[key]?.widthPercent ?? 20), 8, 100),
-        heightPercent: clampNumber(Number(value.heightPercent ?? value.h ?? safe.landscape[key]?.heightPercent ?? 20), 8, 100)
+        xPercent: clampRange(Number(value.xPercent ?? value.x ?? safe.landscape[key]?.xPercent ?? 50), 0, 100),
+        yPercent: clampRange(Number(value.yPercent ?? value.y ?? safe.landscape[key]?.yPercent ?? 50), 0, 100),
+        widthPercent: clampRange(Number(value.widthPercent ?? value.w ?? safe.landscape[key]?.widthPercent ?? 20), 8, 100),
+        heightPercent: clampRange(Number(value.heightPercent ?? value.h ?? safe.landscape[key]?.heightPercent ?? 20), 8, 100)
       };
       safe.portrait[key] = { ...safe.landscape[key] };
     }
   }
 
   return safe;
-}
-
-function clampNumber(value, min, max) {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(Math.max(value, min), max);
 }
 function getOwnerCredentials() {
   loadDotEnv(path.join(__dirname, '.env'));
@@ -261,7 +278,12 @@ const reconnectSessions = new Map();
 setInterval(() => {
   const cutoff = Date.now() - 60000;
   for (const [guestId, session] of reconnectSessions) {
-    if (session.savedAt < cutoff) reconnectSessions.delete(guestId);
+    if (session.savedAt < cutoff) {
+      if (session.socketId && typeof deletePlayerBuildings === 'function') {
+        deletePlayerBuildings(session.socketId);
+      }
+      reconnectSessions.delete(guestId);
+    }
   }
 }, 30000).unref();
 const mobs = new Map();
@@ -280,6 +302,74 @@ setInterval(() => {
     }
   }
 }, 30000);
+
+const mmorpgLootBags = new Map();
+let nextLootBagId = 1;
+
+function spawnMmorpgLoot(x, y, mobType, killer) {
+  const bagId = `loot-${nextLootBagId++}`;
+  const drops = [];
+  const table = MmorpgData.MOB_DROPS[mobType] || MmorpgData.MOB_DROPS.slime;
+  for (const entry of table) {
+    if (Math.random() <= entry.chance) {
+      const count = Math.floor(Math.random() * (entry.max - entry.min + 1)) + entry.min;
+      drops.push({ id: entry.id, count });
+    }
+  }
+  const gold = Math.floor(12 + Math.random() * 25);
+  const bag = {
+    id: bagId,
+    x: Math.round(x),
+    y: Math.round(y),
+    items: drops,
+    gold,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 90000
+  };
+  mmorpgLootBags.set(bagId, bag);
+  io.to('mode:mmorpg').emit('mmorpg_loot_spawn', bag);
+  return bag;
+}
+
+function applyMmorpgEquipmentStats(player) {
+  if (!player || !player.mmorpg) return;
+  const eq = player.mmorpg.equipment || {};
+  const stats = MmorpgData.calculateEquipmentStats(eq);
+
+  player.baseMaxHp = 250;
+  player.maxHp = 250 + stats.extraHp;
+  player.hp = Math.min(player.hp || player.maxHp, player.maxHp);
+
+  player.damageMultiplier = 1.0 + (stats.totalAtk / 40);
+  const armorReduction = Math.min(0.75, stats.totalDef / (stats.totalDef + 120));
+  player.armorMultiplier = Math.max(0.25, 1.0 - armorReduction);
+
+  let spdBonus = stats.extraSpeed || 0;
+  if (player._speedBuffUntil && player._speedBuffUntil > Date.now()) {
+    spdBonus += 0.25;
+  }
+  player.speedMultiplier = 1.0 + spdBonus;
+  player.lifesteal = stats.lifesteal || 0;
+}
+
+function persistPlayerMmorpg(player) {
+  if (!player || !player.mmorpg) return;
+  if (player._authUser) {
+    player._authUser.mmorpg = player.mmorpg;
+    saveAccountData();
+  }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [bagId, bag] of mmorpgLootBags) {
+    if (bag.expiresAt <= now) {
+      mmorpgLootBags.delete(bagId);
+      io.to('mode:mmorpg').emit('mmorpg_loot_despawn', { bagId });
+    }
+  }
+}, 5000);
+
 const authRateLimits = new Map();
 const AUTH_LIMITS = {
   login: { max: 12, windowMs: 10 * 60 * 1000 },
@@ -512,15 +602,17 @@ const allowedOrigins = new Set([
   ...defaultAllowedOrigins.map(normalizeAllowedOrigin),
 ].filter(Boolean));
 const allowedOriginHostnames = new Set([...allowedOrigins].map(origin => {
-  if (origin.startsWith('http://')) return origin.replace(/^http:\/\//, '');
-  if (origin.startsWith('https://')) return origin.replace(/^https:\/\//, '');
-  return origin;
+  return origin.replace(/^https?:\/\//, '').split(':')[0];
 }));
+allowedOriginHostnames.add('localhost');
+allowedOriginHostnames.add('127.0.0.1');
+allowedOriginHostnames.add('0.0.0.0');
+
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   const normalized = normalizeAllowedOrigin(origin);
   if (allowedOrigins.has(normalized)) return true;
-  const hostname = normalized.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
+  const hostname = normalized.replace(/^https?:\/\//, '').split(':')[0];
   return allowedOriginHostnames.has(hostname);
 }
 const worldSeed = 0x4F524553;
@@ -1277,7 +1369,7 @@ function profileResponse(user) {
   };
 }
 
-function usernameKey(username) { return String(username || '').trim().toLocaleLowerCase('tr-TR'); }
+function usernameKey(username) { return String(username || '').trim().toLowerCase(); }
 function loginIdentifier(value) {
   return String(value || '').trim().toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -1295,13 +1387,14 @@ function createToken(user) {
   const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const signature = crypto.createHmac('sha256', authSecret).update(encoded).digest('base64url');
   const token = `${encoded}.${signature}`;
-  sessions.set(token, usernameKey(user.username));
+  sessions.set(token, { username: usernameKey(user.username), createdAt: Date.now() });
   return token;
 }
 
 function verifyToken(token) {
   if (!token || typeof token !== 'string') return null;
-  const directUsername = sessions.get(token);
+  const rawSession = sessions.get(token);
+  const directUsername = typeof rawSession === 'object' && rawSession ? rawSession.username : rawSession;
   if (directUsername && accountData.users[directUsername]) {
     return accountData.users[directUsername];
   }
@@ -1325,7 +1418,7 @@ function verifyToken(token) {
     const key = usernameKey(username);
     const user = accountData.users[key];
     if (user) {
-      sessions.set(token, key);
+      sessions.set(token, { username: key, createdAt: Date.now() });
       return user;
     }
   } catch (e) {
@@ -1946,6 +2039,73 @@ async function handleApi(request, response, requestPath) {
     }
     ownerAudit('player_action', { username: session.username, playerId, playerName: player.name, action, amount: body.amount });
     sendJson(response, 200, { ok: true, action, playerId });
+    return true;
+  }
+  if (requestPath === '/api/owner/creator-events' && request.method === 'GET') {
+    const session = ownerRequired(request, response);
+    if (!session) return true;
+    const allEvents = [];
+    for (const [unameKey, u] of Object.entries(accountData.users)) {
+      if (u.creatorEvent?.submissions?.length) {
+        for (const sub of u.creatorEvent.submissions) {
+          allEvents.push({
+            username: u.username,
+            ...sub
+          });
+        }
+      }
+    }
+    allEvents.sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
+    sendJson(response, 200, { ok: true, submissions: allEvents });
+    return true;
+  }
+  if (requestPath === '/api/owner/creator-event/review' && request.method === 'POST') {
+    const session = ownerRequired(request, response);
+    if (!session) return true;
+    let reviewBody;
+    try { reviewBody = await readJson(request); } catch (_) { sendJson(response, 400, { error: 'Geçersiz veri.' }); return true; }
+    const targetUsername = String(reviewBody.username || '').trim();
+    const submissionId = String(reviewBody.submissionId || '').trim();
+    const status = String(reviewBody.status || '').trim().toLowerCase();
+    const views = Math.max(100, Number(reviewBody.views) || 50000);
+    if (!['approved', 'rejected'].includes(status)) {
+      sendJson(response, 400, { error: 'Durum "approved" veya "rejected" olmalıdır.' });
+      return true;
+    }
+    const targetUser = accountData.users[usernameKey(targetUsername)];
+    if (!targetUser || !targetUser.creatorEvent?.submissions) {
+      sendJson(response, 404, { error: 'Kullanıcı veya başvuru bulunamadı.' });
+      return true;
+    }
+    const sub = targetUser.creatorEvent.submissions.find(s => s.id === submissionId);
+    if (!sub) {
+      sendJson(response, 404, { error: 'Başvuru bulunamadı.' });
+      return true;
+    }
+    sub.status = status;
+    if (status === 'approved') {
+      sub.approvedAt = Date.now();
+      sub.estimatedViews = views;
+    } else {
+      sub.rejectedAt = Date.now();
+    }
+    targetUser.creatorEvent.totalViews = (targetUser.creatorEvent.submissions || []).reduce((sum, s) => sum + (s.status === 'approved' ? (s.estimatedViews || 0) : 0), 0);
+    saveAccountData(true);
+    ownerAudit('creator_review', { username: session.username, targetUser: targetUser.username, submissionId, status, views });
+    for (const p of players.values()) {
+      if (p._authUser && usernameKey(p._authUser.username) === usernameKey(targetUser.username)) {
+        const s = io.sockets.sockets.get(p.id);
+        if (s?.connected) {
+          s.emit('creator_status_update', { submissionId, status, estimatedViews: sub.estimatedViews });
+          s.emit('server_announce', {
+            message: status === 'approved' ? `🎬 Tebrikler! Video başvurunuz onaylandı (${sub.estimatedViews.toLocaleString('tr-TR')} izlenme)!` : '⚠️ Video başvurunuz incelendi ve reddedildi.',
+            level: status === 'approved' ? 'reward' : 'warning',
+            title: 'İÇERİK ÜRETİCİ'
+          });
+        }
+      }
+    }
+    sendJson(response, 200, { ok: true, submission: sub, totalViews: targetUser.creatorEvent.totalViews });
     return true;
   }
   if (requestPath === '/api/health' && request.method === 'GET') {
@@ -2710,16 +2870,8 @@ async function handleApi(request, response, requestPath) {
   if (requestPath === '/api/shop/sync' && request.method === 'POST') {
     if (!user) sendJson(response, 401, { error: 'Oturum gereklidir.' });
     else {
-      if (Array.isArray(body.ownedItems)) {
-        user.ownedItems = ownedItemsForUser(user, sanitizeOwnedItems(body.ownedItems));
-      }
       if (body.equippedItems && typeof body.equippedItems === 'object') {
         user.equippedItems = equippedItemsForUser(user, { ...(user.equippedItems || {}), ...body.equippedItems });
-      }
-      const incomingCoins = clampNumber(body.coins, user.coins || 0, 0, MAX_ACCOUNT_COINS);
-      if (Number.isFinite(incomingCoins) && incomingCoins >= 0 && incomingCoins >= (user.coins || 0)) {
-        user.coins = incomingCoins;
-        user.gold = user.coins;
       }
       saveAccountData(true);
       sendJson(response, 200, publicUser(user));
@@ -3102,6 +3254,11 @@ function compactState(state, full = false) {
     res.axeSkin = state.axeSkin || state.acc?.b || null;
     res.swordSkin = state.swordSkin || state.acc?.w || null;
   }
+  if (state.mode === 'mmorpg') {
+    res.mode = 'mmorpg';
+    res.clvl = state.mmorpg?.combatLvl || 1;
+    res.eq = state.mmorpg?.equipment || null;
+  }
   return res;
 }
 
@@ -3207,12 +3364,7 @@ function compactMobTick(mob) {
     angle: mob.angle !== undefined ? Math.round(mob.angle * 100) / 100 : 0,
     hp: mob.hp,
     maxHp: mob.maxHp,
-    radius: mob.radius || 46,
-    color: mob.color || '#6b4932',
-    outline: mob.outline || '#28170d',
-    eyes: mob.eyes || '#ffcc66',
     shape: mob.shape || 'wolf',
-    typeName: mob.typeName || '🐺 Kurt',
     state: mob.state || 'idle',
     hitFlash: mob.hitFlash || 0,
     enraged: Boolean(mob.isEnraged),
@@ -3969,7 +4121,11 @@ function isMobTargetEligible(mob, candidate, socketMap = io?.sockets?.sockets) {
 }
 
 function applyPlayerDamage(target, damage) {
-  target.hp = Math.max(0, (target.hp ?? 250) - Math.max(1, Math.round(Number(damage) || 1)));
+  if (!target) return target;
+  const rawDmg = Math.max(1, Math.round(Number(damage) || 1));
+  const armor = Math.max(0.3, Math.min(3.0, Number(target.armorMultiplier) || 1.0));
+  const effectiveDamage = Math.max(1, Math.round(rawDmg / armor));
+  target.hp = Math.max(0, (target.hp ?? 250) - effectiveDamage);
   target.hpSeq = (target.hpSeq || 0) + 1;
   target.hpAt = Date.now();
   return target;
@@ -4332,6 +4488,13 @@ function onPlayerDeath(playerId) {
   deletePlayerBuildings(playerId);
   const target = players.get(playerId);
   if (target) {
+    if (target.mode === 'mmorpg') {
+      target._dead = true;
+      target.hp = 0;
+      target.x = 0;
+      target.y = 0;
+      return;
+    }
     target.wood = 0;
     target.stone = 0;
     target.gold = 0;
@@ -4627,7 +4790,7 @@ setInterval(() => {
   ensureMobs();
   const changed = [];
   const now = Date.now();
-  const tickScale = Math.max(0.5, Math.min(2, (now - lastMobTickAt) / 100));
+  const tickScale = Math.max(0.2, Math.min(2.5, (now - lastMobTickAt) / 50));
   lastMobTickAt = now;
   for (const mob of mobs.values()) {
     mob.stateSeq = (mob.stateSeq || 0) + 1;
@@ -4684,7 +4847,7 @@ setInterval(() => {
     const targetDistance = target ? ((target.x - mob.x) ** 2 + (target.y - mob.y) ** 2) : Infinity;
     if (target && now < mob.chaseUntil) {
       const distance = Math.sqrt(targetDistance) || 1;
-      const spd = (mob.speed || MOB_SPEED) * (mob.isEnraged ? 1.28 : 1.0);
+      const spd = ((mob.speed || MOB_SPEED) * 0.5) * (mob.isEnraged ? 1.28 : 1.0);
       const targetAngle = Math.atan2(target.y - mob.y, target.x - mob.x);
       const mobHash = (parseInt(String(mob.id).replace(/\D/g, ''), 10) || 0) % 5;
       const flankOffset = (mobHash - 2) * 0.26;
@@ -4729,8 +4892,8 @@ setInterval(() => {
         const dashDist = Math.min(80, Math.max(20, distance - 40));
         mob.x += Math.cos(targetAngle) * (dashDist * 0.35);
         mob.y += Math.sin(targetAngle) * (dashDist * 0.35);
-        mob.vx = Math.cos(targetAngle) * (mob.speed || MOB_SPEED) * 1.8;
-        mob.vy = Math.sin(targetAngle) * (mob.speed || MOB_SPEED) * 1.8;
+        mob.vx = Math.cos(targetAngle) * spd * 1.8;
+        mob.vy = Math.sin(targetAngle) * spd * 1.8;
         const dashDmg = 45;
         const damageRes = applyMobDamage(mob, target, dashDmg);
         io.emit('mob_ability', {
@@ -4746,8 +4909,8 @@ setInterval(() => {
         const chargeDist = Math.min(70, Math.max(20, distance - 30));
         mob.x += Math.cos(targetAngle) * (chargeDist * 0.35);
         mob.y += Math.sin(targetAngle) * (chargeDist * 0.35);
-        mob.vx = Math.cos(targetAngle) * (mob.speed || MOB_SPEED) * 1.6;
-        mob.vy = Math.sin(targetAngle) * (mob.speed || MOB_SPEED) * 1.6;
+        mob.vx = Math.cos(targetAngle) * spd * 1.6;
+        mob.vy = Math.sin(targetAngle) * spd * 1.6;
         const trampleDmg = 80;
         const damageRes = applyMobDamage(mob, target, trampleDmg);
         io.emit('mob_ability', {
@@ -4799,8 +4962,8 @@ setInterval(() => {
         const pounceDist = Math.min(80, Math.max(20, distance - 30));
         mob.x += Math.cos(targetAngle) * (pounceDist * 0.35);
         mob.y += Math.sin(targetAngle) * (pounceDist * 0.35);
-        mob.vx = Math.cos(targetAngle) * (mob.speed || MOB_SPEED) * 1.8;
-        mob.vy = Math.sin(targetAngle) * (mob.speed || MOB_SPEED) * 1.8;
+        mob.vx = Math.cos(targetAngle) * spd * 1.8;
+        mob.vy = Math.sin(targetAngle) * spd * 1.8;
         const pounceDmg = 60;
         const damageRes = applyMobDamage(mob, target, pounceDmg);
         io.emit('mob_ability', {
@@ -4858,7 +5021,7 @@ setInterval(() => {
       mob.targetId = null;
       mob.state = 'walk';
       if (Math.random() < 0.06) mob.wanderAngle += (Math.random() - 0.5) * 1.4;
-      const wspd = mob.wanderSpeed || MOB_WANDER_SPEED;
+      const wspd = (mob.wanderSpeed || MOB_WANDER_SPEED) * 0.5;
 
       // Biome-aware wandering boundaries
       const mb = mob.biome || 'forest';
@@ -4949,7 +5112,7 @@ setInterval(() => {
     changed.push(compactMobTick(mob));
   }
   syncMobVisibility(changed);
-}, 100);
+}, 50);
 
 // ═════════════════════════════════════════════════════════════════════════
 // DYNAMIC INTELLIGENT BOT AI SYSTEM (CLANS, BASE BUILDING, SQUAD DEFENSE)
@@ -5787,6 +5950,11 @@ setInterval(() => {
     const isDisconnected = !socket || !socket.connected;
     if (isDisconnected && (now - (player.stateAt || now) > 60000)) {
       onPlayerDeath(id);
+      if (player?.roomId && rooms.has(player.roomId)) {
+        const roomSet = rooms.get(player.roomId);
+        roomSet.delete(id);
+        if (roomSet.size === 0) rooms.delete(player.roomId);
+      }
       players.delete(id);
       io.emit('player_dead', { id });
       io.emit('player_left', { id, name: player.name || 'Oyuncu' });
@@ -5897,11 +6065,28 @@ io.on('connection', (socket) => {
     const authorizedSkin = authUser && equippedSkin && canEquipShopItem(authUser, 'deriler', equippedSkin)
       ? equippedSkin
       : (authUser ? (canEquipShopItem(authUser, 'deriler', requestedSkin) ? requestedSkin : 'wolf') : requestedSkin);
+    const isMmorpg = data.mode === 'mmorpg';
+    const gameMode = isMmorpg ? 'mmorpg' : 'online';
+    let mmorpgProfile = null;
+    if (isMmorpg) {
+      if (authUser) {
+        if (!authUser.mmorpg) authUser.mmorpg = MmorpgData.createDefaultProfile();
+        mmorpgProfile = authUser.mmorpg;
+      } else {
+        mmorpgProfile = (data.mmorpg && typeof data.mmorpg === 'object') ? data.mmorpg : MmorpgData.createDefaultProfile();
+      }
+    }
     const guestId = String(data.guestId || '').slice(0, 80);
-    const baseWorldX = normalizeWorldCoord(data.x, 0);
-    const baseWorldY = normalizeWorldCoord(data.y, 0);
+    let baseWorldX = normalizeWorldCoord(data.x, 0);
+    let baseWorldY = normalizeWorldCoord(data.y, 0);
+    if (isMmorpg && (baseWorldX === 0 && baseWorldY === 0 || Math.hypot(baseWorldX, baseWorldY) > 600)) {
+      baseWorldX = Math.round((Math.random() * 2 - 1) * 80);
+      baseWorldY = Math.round((Math.random() * 2 - 1) * 80);
+    }
     const state = {
       ...data,
+      mode: gameMode,
+      mmorpg: mmorpgProfile,
       x: baseWorldX,
       y: baseWorldY,
       skin: authorizedSkin === 'thor' && !canUseThor(authUser) ? 'wolf' : authorizedSkin,
@@ -5951,7 +6136,12 @@ io.on('connection', (socket) => {
       _guestId: guestId,
       _authUser: authUser
     };
-    applyLoadoutStats(state);
+    if (isMmorpg) {
+      applyMmorpgEquipmentStats(state);
+      socket.join('mode:mmorpg');
+    } else {
+      applyLoadoutStats(state);
+    }
     const reconnectSession = guestId ? reconnectSessions.get(guestId) : null;
     if (reconnectSession && reconnectSession.savedAt > Date.now() - 60000 && reconnectSession.state?.hp > 0 && !reconnectSession.state?._dead) {
       const saved = reconnectSession.state;
@@ -5972,14 +6162,16 @@ io.on('connection', (socket) => {
       c.name.toLowerCase() === targetClanKey.toLowerCase()
     )) : null;
     let clanMember = requestedClan?.members?.find(member => member.name === state.name);
-    if (requestedClan && !clanMember && requestedClan.ownerName === state.name) {
+    if (requestedClan && !clanMember && requestedClan.ownerName === state.name && authUser && authUser.username === requestedClan.ownerName) {
       clanMember = { id: socket.id, name: state.name };
       requestedClan.members.push(clanMember);
     }
     updatePlayerRoom(state);
     if (requestedClan && clanMember) {
       clanMember.id = socket.id;
-      if (requestedClan.ownerName === state.name) requestedClan.ownerId = socket.id;
+      if (requestedClan.ownerName === state.name && authUser && authUser.username === requestedClan.ownerName) {
+        requestedClan.ownerId = socket.id;
+      }
       state.clanId = requestedClan.id;
       state.clanTag = requestedClan.tag;
       socket.data.clanId = requestedClan.id;
@@ -6016,6 +6208,7 @@ io.on('connection', (socket) => {
     state.visibleMobIds = new Set(visibleMobs.map(mob => mob.id));
     const others = Object.fromEntries([...players].filter(([id, player]) => {
       if (id === socket.id) return false;
+      if ((player.mode || 'online') !== (state.mode || 'online')) return false;
       const dx = (Number(player.x) || 0) - (Number(state.x) || 0);
       const dy = (Number(player.y) || 0) - (Number(state.y) || 0);
       return dx * dx + dy * dy <= PLAYER_AOI_RADIUS * PLAYER_AOI_RADIUS;
@@ -6023,12 +6216,15 @@ io.on('connection', (socket) => {
     state.visiblePlayerIds = new Set(Object.keys(others));
     socket.emit('welcome', {
       id: socket.id,
+      mode: state.mode || 'online',
+      mmorpg: state.mmorpg || null,
+      mmorpgLoot: isMmorpg ? [...mmorpgLootBags.values()] : [],
       players: others,
-      buildings: Object.fromEntries(buildings),
+      buildings: isMmorpg ? {} : Object.fromEntries(buildings),
       worldSeed,
       resHp: Object.fromEntries(serverResources.map(resource => [resource.idx, { hp: resource.hp, maxHp: resource.maxHp, destroyed: resource.destroyed }])),
       mobs: visibleMobs.map(publicMob),
-      airdrops: [...airdrops.values()].map(publicAirdrop),
+      airdrops: isMmorpg ? [] : [...airdrops.values()].map(publicAirdrop),
       bountyId: currentBountyId,
       announcement: adminConfig.announcement || '',
       isHost: players.size === 1,
@@ -6041,13 +6237,36 @@ io.on('connection', (socket) => {
       }
     });
     socket.emit('mob_ids', [...state.visibleMobIds]);
-    socket.broadcast.emit('player_join', { id: socket.id, state: compactFullState(state) });
+    for (const [otherId, otherPlayer] of players) {
+      if (otherId !== socket.id && (otherPlayer.mode || 'online') === (state.mode || 'online')) {
+        io.to(otherId).emit('player_join', { id: socket.id, state: compactFullState(state) });
+      }
+    }
     broadcastOnlineCount();
     updateBounty();
   });
 
   socket.on('respawn', () => {
     let player = players.get(socket.id);
+    if (player && player.mode === 'mmorpg') {
+      player._dead = false;
+      player.x = Math.round((Math.random() * 2 - 1) * 80);
+      player.y = Math.round((Math.random() * 2 - 1) * 80);
+      player.vx = 0;
+      player.vy = 0;
+      applyMmorpgEquipmentStats(player);
+      player.hp = player.maxHp;
+      socket.emit('respawn_ack', {
+        x: player.x,
+        y: player.y,
+        hp: player.hp,
+        maxHp: player.maxHp
+      });
+      socket.emit('own_respawn', { x: player.x, y: player.y });
+      socket.emit('hp_sync', { hp: player.hp, maxHp: player.maxHp });
+      socket.emit('mmorpg_sync', player.mmorpg);
+      return;
+    }
     const spawnPt = {
       x: Math.round((Math.random() * 2 - 1) * 3200),
       y: Math.round((Math.random() * 2 - 1) * 3200)
@@ -6164,14 +6383,12 @@ io.on('connection', (socket) => {
 
       // ── Boost Pad Detection & Anti-Cheat Allowance ──
       const momMag = Math.hypot(Number(data.momX) || 0, Number(data.momY) || 0);
-      const clientBoost = Boolean(data.boost) || (momMag > 6) || Boolean(player.onTrain);
       const nearBoostPad = nearbyBuildings(prevX, prevY, 480).some(b => b.type === 5 && (b.hp ?? 100) > 0) ||
                            nearbyBuildings(incomingX, incomingY, 480).some(b => b.type === 5 && (b.hp ?? 100) > 0);
-      
-      if (nearBoostPad || clientBoost || player.onTrain || (player.boostUntil && now < player.boostUntil + 1000)) {
-        if (nearBoostPad || clientBoost || player.onTrain) {
-          player.boostUntil = Math.max(player.boostUntil || 0, now + 2500);
-        }
+      const hasPhysicalImpulse = momMag > 5 && (Boolean(player.momX) || Boolean(player.momY));
+      const legitimateBoost = nearBoostPad || Boolean(player.onTrain) || hasPhysicalImpulse;
+      if (legitimateBoost) {
+        player.boostUntil = Math.max(player.boostUntil || 0, now + 2000);
       }
       const isBoosted = Boolean((player.boostUntil && now < player.boostUntil) || player.onTrain);
 
@@ -6242,15 +6459,30 @@ io.on('connection', (socket) => {
       else if (key === 'weapon' && data[key] !== undefined) player.weapon = Number(data[key]) || 1;
       else if (key === 'designWeapon' && data[key] !== undefined) player.designWeapon = sanitizePremiumDesign({ weapon: data[key], set: player.loadoutSet }).weapon;
       else if (key === 'loadoutSet' && data[key] !== undefined) player.loadoutSet = sanitizePremiumDesign({ weapon: player.designWeapon, set: data[key] }).set;
-      else if (key === 'axeTier' && data[key] !== undefined) player.axeTier = Number(data[key]) || 0;
-      else if (key === 'swordTier' && data[key] !== undefined) player.swordTier = Number(data[key]) || 0;
+      else if (key === 'axeTier' && data[key] !== undefined) {
+        const reqTier = Math.max(0, Math.min(6, Number(data[key]) || 0));
+        if (reqTier <= (player.axeTier || 0) + 1) player.axeTier = reqTier;
+      }
+      else if (key === 'swordTier' && data[key] !== undefined) {
+        const reqTier = Math.max(0, Math.min(6, Number(data[key]) || 0));
+        if (reqTier <= (player.swordTier || 0) + 1) player.swordTier = reqTier;
+      }
       else if (data[key] !== undefined) player[key] = data[key];
     }
-    // Accept predicted client resource gathering monotonically only if player is alive
+    // Accept predicted client resource gathering monotonically only if player is alive with rate clamp
     if (!player._dead && (player.hp ?? 100) > 0) {
-      if (data.wood !== undefined) player.wood = Math.max(player.wood || 0, Number(data.wood) || 0);
-      if (data.stone !== undefined) player.stone = Math.max(player.stone || 0, Number(data.stone) || 0);
-      if (data.apples !== undefined) player.apples = Math.max(player.apples || 0, Number(data.apples) || 0);
+      if (data.wood !== undefined) {
+        const wVal = Number(data.wood);
+        if (Number.isFinite(wVal) && wVal >= 0) player.wood = Math.min(2_000_000, Math.max(player.wood || 0, Math.min((player.wood || 0) + 120, wVal)));
+      }
+      if (data.stone !== undefined) {
+        const sVal = Number(data.stone);
+        if (Number.isFinite(sVal) && sVal >= 0) player.stone = Math.min(2_000_000, Math.max(player.stone || 0, Math.min((player.stone || 0) + 120, sVal)));
+      }
+      if (data.apples !== undefined) {
+        const aVal = Number(data.apples);
+        if (Number.isFinite(aVal) && aVal >= 0) player.apples = Math.min(10000, Math.max(player.apples || 0, Math.min((player.apples || 0) + 10, aVal)));
+      }
     }
     capturePlayerInTrap(player);
     resolveTrapOwnerCollisions(player);
@@ -6286,8 +6518,10 @@ io.on('connection', (socket) => {
         }
 
         // 2. Dynamic Players (Solid Separation, Trap Pushing & Momentum Impulse)
-        for (const [otherId, other] of players) {
-          if (otherId === socket.id || !other || other.hp <= 0) continue;
+        const nearOthers = nearbyPlayers(player.x, player.y, pRad + 80, socket.id);
+        for (let oi = 0; oi < nearOthers.length; oi++) {
+          const other = nearOthers[oi];
+          if (!other || other.hp <= 0) continue;
           const otherRad = Number(other.radius) || 35;
           const minDist = pRad + otherRad;
           if (other.trappedBy) {
@@ -6345,18 +6579,12 @@ io.on('connection', (socket) => {
 
   socket.on('swing', (data = {}) => {
     if (socketEventRateLimited(socket, 'swing')) return;
-    let attacker = players.get(socket.id);
-    if (!attacker) {
-      attacker = { id: socket.id, name: 'Oyuncu', hp: 250, maxHp: 250, stateAt: Date.now() };
-      players.set(socket.id, attacker);
-    }
-    if ((attacker.hp ?? 250) <= 0) attacker.hp = 250;
+    const attacker = players.get(socket.id);
+    if (!attacker || (attacker.hp ?? 0) <= 0 || attacker._dead) return;
     const incomingWeapon = Number(data.weapon ?? attacker.weapon);
     const isBuildingWeapon = incomingWeapon >= 3 && incomingWeapon <= 10;
     const weapon = isBuildingWeapon ? incomingWeapon : (incomingWeapon === 2 ? 2 : 1);
     attacker.weapon = incomingWeapon;
-    if (data.axeTier !== undefined) attacker.axeTier = Number(data.axeTier) || 0;
-    if (data.swordTier !== undefined) attacker.swordTier = Number(data.swordTier) || 0;
     const now = Date.now();
     const swingCooldown = isBuildingWeapon ? 40 : (weapon === 2 ? 54 : 42);
     if (now - (attacker.lastSwingAt || 0) < swingCooldown) return;
@@ -6366,7 +6594,8 @@ io.on('connection', (socket) => {
     const spread = weapon === 2 ? Math.PI / 3.25 : Math.PI / 2.57;
     const tier = Math.max(0, Math.min(5, Number(weapon === 2 ? attacker.swordTier : attacker.axeTier) || 0));
     const multiplier = [1, 1.5, 2.2, 3.5, 5, 8][tier];
-    const damage = isBuildingWeapon ? 0 : Math.min(120, Math.round((weapon === 2 ? 30 : 22) * multiplier));
+    const dmgMult = Math.max(0.5, Math.min(3.0, Number(attacker.damageMultiplier) || 1.0));
+    const damage = isBuildingWeapon ? 0 : Math.min(150, Math.round((weapon === 2 ? 30 : 22) * multiplier * dmgMult));
     const angle = Number(data.angle);
     if (!Number.isFinite(angle)) return;
     attacker.lastSwingAt = now;
@@ -6399,6 +6628,7 @@ io.on('connection', (socket) => {
       if (difference > Math.PI) difference = Math.PI * 2 - difference;
       if (difference > spread) continue;
       if (swingId) target.lastHitSwingId = swingId;
+      target.lastHitTime = now;
       applyPlayerDamage(target, damage);
       if (target.isBot) alertBotAttacked(target, attacker);
       io.to(targetId).emit('pvp_hit', { dmg: damage, fromName: attacker.name || 'Oyuncu' });
@@ -6435,19 +6665,23 @@ io.on('connection', (socket) => {
     if (!pvpAllowed()) return;
     const attacker = players.get(socket.id);
     const target = players.get(data.targetId);
-    if (!attacker || !target || (attacker.hp ?? 0) <= 0 || (target.hp ?? 0) <= 0) return;
+    if (!attacker || !target || (attacker.hp ?? 0) <= 0 || (target.hp ?? 0) <= 0 || attacker._dead || target._dead) return;
     if (!validateCombatState(attacker, target, { allowTrapHit: true, rangeLimit: 200, damage: 1 })) return;
     const swingId = Number(data.swingId);
-    if (!Number.isFinite(attacker.lastSwingAt) || Date.now() - attacker.lastSwingAt > 750) return;
+    const now = Date.now();
+    if (!Number.isFinite(attacker.lastSwingAt) || now - attacker.lastSwingAt > 750) return;
     if (swingId && target.lastHitSwingId === swingId) return; // Dedup against swing event
+    if (now - (target.lastHitTime || 0) < 140) return; // Prevent duplicate rapid damage from same swing
     const dist = Math.hypot((Number(target.x) || 0) - (Number(attacker.x) || 0), (Number(target.y) || 0) - (Number(attacker.y) || 0));
     const range = (attacker.weapon === 2 ? 140 : 128) + 120;
     if (dist > range) return;
     const weapon = attacker.weapon === 2 ? 2 : 1;
     const tier = Math.max(0, Math.min(5, Number(weapon === 2 ? attacker.swordTier : attacker.axeTier) || 0));
     const multiplier = [1, 1.5, 2.2, 3.5, 5, 8][tier];
-    const damage = Math.min(120, Math.round((weapon === 2 ? 30 : 22) * multiplier));
+    const dmgMult = Math.max(0.5, Math.min(3.0, Number(attacker.damageMultiplier) || 1.0));
+    const damage = Math.min(150, Math.round((weapon === 2 ? 30 : 22) * multiplier * dmgMult));
     if (swingId) target.lastHitSwingId = swingId;
+    target.lastHitTime = now;
     applyPlayerDamage(target, damage);
     if (target.isBot) alertBotAttacked(target, attacker);
     io.to(data.targetId).emit('pvp_hit', { dmg: damage, fromName: attacker.name || 'Oyuncu' });
@@ -6663,7 +6897,9 @@ io.on('connection', (socket) => {
     // Natural resources never break / deplete: keep HP full so players can farm infinitely
     resource.hp = resource.maxHp || 500;
     resource.destroyed = false;
-    io.emit('res_sync', { idx, hp: resource.hp, maxHp: resource.maxHp, shake: true, destroyed: false });
+    const resPayload = { idx, hp: resource.hp, maxHp: resource.maxHp, shake: true, destroyed: false };
+    socket.emit('res_sync', resPayload);
+    broadcastPlayerEventNear(player, 'res_sync', resPayload);
 
     // Per-hit harvesting rewards
     let gainedWood = 0, gainedStone = 0, gainedGold = 0, gainedApples = 0, gainedHp = 0, gainedXp = 0, gainedScore = 0;
@@ -6717,6 +6953,57 @@ io.on('connection', (socket) => {
     player.gold = (player.gold || 0) + gainedGold;
     player.apples = (player.apples || 0) + gainedApples;
     player.score = (player.score || 0) + gainedScore;
+
+    if (player.mode === 'mmorpg' && player.mmorpg) {
+      let matId = 'oak_log';
+      let skillType = 'wood';
+      let xpAmount = 18;
+
+      if (resource.type === 'wood' || resource.type === 'apple' || resource.type === 'bush') {
+        skillType = 'wood';
+        const dist = Math.hypot(resource.x, resource.y);
+        if (dist > 5200) { matId = 'magic_log'; xpAmount = 85; }
+        else if (dist > 3600) { matId = 'maple_log'; xpAmount = 45; }
+        else if (dist > 1900) { matId = 'willow_log'; xpAmount = 28; }
+        else { matId = 'oak_log'; xpAmount = 16; }
+      } else {
+        skillType = 'mining';
+        const dist = Math.hypot(resource.x, resource.y);
+        if (dist > 5200) { matId = 'blood_shard'; xpAmount = 160; }
+        else if (dist > 3600) { matId = 'cobalt_ore'; xpAmount = 90; }
+        else if (dist > 2400) { matId = 'gold_ore'; xpAmount = 50; }
+        else if (dist > 1300) { matId = 'iron_ore'; xpAmount = 28; }
+        else { matId = 'copper_ore'; xpAmount = 16; }
+      }
+
+      const existing = player.mmorpg.inventory.find(it => it && it.id === matId && (it.count || 1) < 999);
+      if (existing) {
+        existing.count = (existing.count || 1) + 1;
+      } else if (player.mmorpg.inventory.length < 24) {
+        player.mmorpg.inventory.push({ id: matId, count: 1 });
+      }
+
+      if (skillType === 'wood') {
+        const prevLvl = player.mmorpg.woodLvl || 1;
+        player.mmorpg.woodXp = (player.mmorpg.woodXp || 0) + xpAmount;
+        const newLvl = MmorpgData.getLevelFromXp(player.mmorpg.woodXp);
+        if (newLvl > prevLvl) {
+          player.mmorpg.woodLvl = newLvl;
+          socket.emit('mmorpg_level_up', { skill: 'wood', level: newLvl });
+        }
+      } else {
+        const prevLvl = player.mmorpg.miningLvl || 1;
+        player.mmorpg.miningXp = (player.mmorpg.miningXp || 0) + xpAmount;
+        const newLvl = MmorpgData.getLevelFromXp(player.mmorpg.miningXp);
+        if (newLvl > prevLvl) {
+          player.mmorpg.miningLvl = newLvl;
+          socket.emit('mmorpg_level_up', { skill: 'mining', level: newLvl });
+        }
+      }
+
+      socket.emit('mmorpg_sync', player.mmorpg);
+      persistPlayerMmorpg(player);
+    }
 
     if (player._authUser && gainedGold > 0) {
       player._authUser.coins = (player._authUser.coins || 0) + gainedGold;
@@ -6794,20 +7081,12 @@ io.on('connection', (socket) => {
 
   socket.on('mob_hit_req', (data = {}) => {
     if (socketEventRateLimited(socket, 'mob_hit_req')) return;
+    const now = Date.now();
     const mobId = String(data.mobId || '');
     const mob = mobs.get(mobId);
     if (!mob || mob.hp <= 0) return;
-    let attacker = players.get(socket.id);
-    if (!attacker) {
-      attacker = { id: socket.id, name: 'Oyuncu', hp: 250, maxHp: 250, stateAt: Date.now() };
-      players.set(socket.id, attacker);
-    }
-    const now = Date.now();
-    const hitKey = `${socket.id}:${mob.id}`;
-    if (now - (mobHitCooldowns.get(hitKey) || 0) < 180) return;
-    mobHitCooldowns.set(hitKey, now);
-
-    if ((attacker.hp ?? 250) <= 0) return;
+    const attacker = players.get(socket.id);
+    if (!attacker || (attacker.hp ?? 0) <= 0 || attacker._dead) return;
     let sourceX = Number(attacker.x) || 0;
     let sourceY = Number(attacker.y) || 0;
     let range = 155;
@@ -6830,7 +7109,21 @@ io.on('connection', (socket) => {
     if (distance > range + (mob.radius || 0) + (data.buildingId ? 40 : 0)) return;
     const tier = Math.max(0, Math.min(6, Number(weapon === 2 ? attacker.swordTier : attacker.axeTier) || 0));
     const multiplier = [1, 1.5, 2.2, 3.5, 5, 8, 12][tier];
-    const dmg = Math.min(120, Math.round((weapon === 2 ? 30 : 22) * multiplier));
+    let dmg = Math.min(120, Math.round((weapon === 2 ? 30 : 22) * multiplier));
+
+    if (attacker.mode === 'mmorpg' && attacker.mmorpg) {
+      const eqWeapon = attacker.mmorpg.equipment?.weapon;
+      const def = eqWeapon ? MmorpgData.ITEMS[eqWeapon] : null;
+      const baseAtk = def?.atk || 14;
+      const combatLvl = attacker.mmorpg.combatLvl || 1;
+      dmg = Math.round((baseAtk + combatLvl * 1.5) * (attacker.damageMultiplier || 1.0));
+      if (attacker.lifesteal && attacker.lifesteal > 0) {
+        const heal = Math.max(1, Math.round(dmg * attacker.lifesteal));
+        attacker.hp = Math.min(attacker.maxHp || 250, (attacker.hp || 0) + heal);
+        socket.emit('hp_sync', { hp: attacker.hp, maxHp: attacker.maxHp, heal });
+      }
+    }
+
     mob.hp = Math.max(0, mob.hp - dmg);
     mob.targetId = socket.id;
     mob.chaseUntil = now + MOB_CHASE_TIMEOUT;
@@ -6845,6 +7138,21 @@ io.on('connection', (socket) => {
     if (mob.hp <= 0) {
       mobs.delete(mob.id);
       io.emit('mob_dead', { id: mob.id, killerId: socket.id });
+
+      if (attacker.mode === 'mmorpg' && attacker.mmorpg) {
+        spawnMmorpgLoot(mob.x, mob.y, mob.shape || mob.biome || 'slime', attacker);
+        const combatXp = Math.round((mob.xpReward || 35) * 1.6);
+        const prevLvl = attacker.mmorpg.combatLvl || 1;
+        attacker.mmorpg.combatXp = (attacker.mmorpg.combatXp || 0) + combatXp;
+        const newLvl = MmorpgData.getLevelFromXp(attacker.mmorpg.combatXp);
+        if (newLvl > prevLvl) {
+          attacker.mmorpg.combatLvl = newLvl;
+          socket.emit('mmorpg_level_up', { skill: 'combat', level: newLvl });
+        }
+        socket.emit('mmorpg_sync', attacker.mmorpg);
+        persistPlayerMmorpg(attacker);
+      }
+
       const rewardGold = Math.max(1, Math.floor((mob.goldReward || 10) * 0.65));
       const rewardXp = Math.max(1, Math.round((mob.xpReward || 35) * Math.max(0.1, Number(adminConfig.xpRate) || 1)));
       const rewardScore = Math.round(rewardXp * 0.75 + rewardGold * 3);
@@ -6909,7 +7217,7 @@ io.on('connection', (socket) => {
       return;
     }
     const owner = players.get(socket.id);
-    if (!owner) return;
+    if (!owner || owner.mode === 'mmorpg') return;
     const now = Date.now();
     const limit = SERVER_BUILD_LIMITS[bType] || 25;
     let ownedCount = 0;
@@ -6977,7 +7285,6 @@ io.on('connection', (socket) => {
       durationMs: 240
     });
     io.emit('build', { id, building: { ...building } });
-    io.emit('buildings_sync', { buildings: Object.fromEntries(buildings) });
   });
   socket.on('build', (data = {}) => {
     // Legacy client event intentionally ignored; place_building is authoritative.
@@ -6993,7 +7300,6 @@ io.on('connection', (socket) => {
     buildings.delete(id);
     rebuildBuildingGrid();
     io.emit('build_destroy', { id });
-    io.emit('buildings_sync', { buildings: Object.fromEntries(buildings) });
     io.emit('trap_freed', { buildingId: id });
   });
   socket.on('building_hit', ({ id, dmg } = {}) => {
@@ -7012,7 +7318,6 @@ io.on('connection', (socket) => {
       buildings.delete(id);
       rebuildBuildingGrid();
       io.emit('build_destroy', { id });
-      io.emit('buildings_sync', { buildings: Object.fromEntries(buildings) });
       io.emit('trap_freed', { buildingId: id });
     }
   });
@@ -7029,7 +7334,6 @@ io.on('connection', (socket) => {
     if (hp >= (building.hp ?? building.maxHp ?? 100)) return;
     building.hp = Math.max(0, Math.min(building.hp ?? building.maxHp ?? 100, hp));
     io.emit('build_hp_update', { id, hp: building.hp });
-    io.emit('buildings_sync', { buildings: Object.fromEntries(buildings) });
   });
 
   socket.on('build_tier_update', (data = {}) => {
@@ -7053,13 +7357,330 @@ io.on('connection', (socket) => {
     building.maxHp = Math.round(baseHp * tierHpMultiplier);
     building.hp = Math.max(1, Math.round(building.maxHp * hpRatio));
     io.emit('build_tier_update', { id, tier: building.tier, maxHp: building.maxHp, hp: building.hp });
-    io.emit('buildings_sync', { buildings: Object.fromEntries(buildings) });
     if (player) {
       socket.emit('self_state', { sc: player.score, g: player.gold });
     }
   });
 
   socket.on('buildings_sync', () => socket.emit('buildings_sync', { buildings: Object.fromEntries(buildings) }));
+
+  // ── MMORPG MODE SOCKET EVENTS ──
+  socket.on('mmorpg_equip', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    const itemId = String(data.itemId || '');
+    const itemDef = MmorpgData.ITEMS[itemId];
+    if (!itemDef || itemDef.type !== 'equipment' || !itemDef.slot) return;
+
+    const playerCombatLvl = player.mmorpg.combatLvl || 1;
+    if (itemDef.reqLvl && playerCombatLvl < itemDef.reqLvl) {
+      socket.emit('mmorpg_toast', { text: `Bu eşya için Seviye ${itemDef.reqLvl} gerekiyor!`, type: 'error' });
+      return;
+    }
+
+    const invIdx = player.mmorpg.inventory.findIndex(it => it && it.id === itemId);
+    if (invIdx === -1) return;
+
+    const itemEntry = player.mmorpg.inventory[invIdx];
+    if (itemEntry.count > 1) {
+      itemEntry.count--;
+    } else {
+      player.mmorpg.inventory.splice(invIdx, 1);
+    }
+
+    const currentEquippedId = player.mmorpg.equipment[itemDef.slot];
+    if (currentEquippedId) {
+      const existingInInv = player.mmorpg.inventory.find(it => it && it.id === currentEquippedId && (it.count || 1) < (MmorpgData.ITEMS[currentEquippedId]?.maxStack || 1));
+      if (existingInInv) {
+        existingInInv.count = (existingInInv.count || 1) + 1;
+      } else {
+        player.mmorpg.inventory.push({ id: currentEquippedId, count: 1 });
+      }
+    }
+
+    player.mmorpg.equipment[itemDef.slot] = itemId;
+    applyMmorpgEquipmentStats(player);
+    socket.emit('mmorpg_sync', player.mmorpg);
+    socket.emit('hp_sync', { hp: player.hp, maxHp: player.maxHp });
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_unequip', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    const slot = String(data.slot || '');
+    const equippedId = player.mmorpg.equipment[slot];
+    if (!equippedId) return;
+
+    if (player.mmorpg.inventory.length >= 24) {
+      socket.emit('mmorpg_toast', { text: 'Çantan dolu!', type: 'warning' });
+      return;
+    }
+
+    player.mmorpg.equipment[slot] = null;
+    const existingInInv = player.mmorpg.inventory.find(it => it && it.id === equippedId && (it.count || 1) < (MmorpgData.ITEMS[equippedId]?.maxStack || 1));
+    if (existingInInv) {
+      existingInInv.count = (existingInInv.count || 1) + 1;
+    } else {
+      player.mmorpg.inventory.push({ id: equippedId, count: 1 });
+    }
+
+    applyMmorpgEquipmentStats(player);
+    socket.emit('mmorpg_sync', player.mmorpg);
+    socket.emit('hp_sync', { hp: player.hp, maxHp: player.maxHp });
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_use_item', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg || (player.hp ?? 0) <= 0) return;
+    const itemId = String(data.itemId || '');
+    const itemDef = MmorpgData.ITEMS[itemId];
+    if (!itemDef || itemDef.type !== 'consumable') return;
+
+    const invIdx = player.mmorpg.inventory.findIndex(it => it && it.id === itemId);
+    if (invIdx === -1) return;
+
+    if (player.mmorpg.inventory[invIdx].count > 1) {
+      player.mmorpg.inventory[invIdx].count--;
+    } else {
+      player.mmorpg.inventory.splice(invIdx, 1);
+    }
+
+    if (itemDef.healHp) {
+      player.hp = Math.min(player.maxHp || 250, (player.hp || 0) + itemDef.healHp);
+      socket.emit('hp_sync', { hp: player.hp, maxHp: player.maxHp, heal: itemDef.healHp });
+      socket.emit('mmorpg_toast', { text: `+${itemDef.healHp} Can Yenilendi!`, type: 'heal' });
+    }
+    if (itemDef.buffSpeed) {
+      player._speedBuffUntil = Date.now() + (itemDef.buffDuration || 35) * 1000;
+      applyMmorpgEquipmentStats(player);
+      socket.emit('mmorpg_toast', { text: 'Hız İksiri Aktif!', type: 'buff' });
+    }
+
+    socket.emit('mmorpg_sync', player.mmorpg);
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_bank_deposit', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    if (Math.hypot(Number(player.x) - (-120), Number(player.y) - (-80)) > 450) {
+      socket.emit('mmorpg_toast', { text: 'Bankaya çok uzaksın!', type: 'warning' });
+      return;
+    }
+    const itemId = String(data.itemId || '');
+    const count = Math.max(1, Math.min(999, Number(data.count) || 1));
+    const invIdx = player.mmorpg.inventory.findIndex(it => it && it.id === itemId);
+    if (invIdx === -1) return;
+
+    if (!player.mmorpg.bank) player.mmorpg.bank = [];
+    if (player.mmorpg.bank.length >= 48) {
+      socket.emit('mmorpg_toast', { text: 'Banka kasası tamamen dolu!', type: 'warning' });
+      return;
+    }
+
+    const takeCount = Math.min(count, player.mmorpg.inventory[invIdx].count || 1);
+    if (player.mmorpg.inventory[invIdx].count > takeCount) {
+      player.mmorpg.inventory[invIdx].count -= takeCount;
+    } else {
+      player.mmorpg.inventory.splice(invIdx, 1);
+    }
+
+    const existingBank = player.mmorpg.bank.find(it => it && it.id === itemId);
+    if (existingBank) {
+      existingBank.count = (existingBank.count || 1) + takeCount;
+    } else {
+      player.mmorpg.bank.push({ id: itemId, count: takeCount });
+    }
+
+    socket.emit('mmorpg_sync', player.mmorpg);
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_bank_withdraw', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    if (Math.hypot(Number(player.x) - (-120), Number(player.y) - (-80)) > 450) {
+      socket.emit('mmorpg_toast', { text: 'Bankaya çok uzaksın!', type: 'warning' });
+      return;
+    }
+    const itemId = String(data.itemId || '');
+    const count = Math.max(1, Math.min(999, Number(data.count) || 1));
+    if (!player.mmorpg.bank) player.mmorpg.bank = [];
+    const bankIdx = player.mmorpg.bank.findIndex(it => it && it.id === itemId);
+    if (bankIdx === -1) return;
+
+    if (player.mmorpg.inventory.length >= 24 && !player.mmorpg.inventory.some(it => it && it.id === itemId)) {
+      socket.emit('mmorpg_toast', { text: 'Çantan dolu!', type: 'warning' });
+      return;
+    }
+
+    const takeCount = Math.min(count, player.mmorpg.bank[bankIdx].count || 1);
+    if (player.mmorpg.bank[bankIdx].count > takeCount) {
+      player.mmorpg.bank[bankIdx].count -= takeCount;
+    } else {
+      player.mmorpg.bank.splice(bankIdx, 1);
+    }
+
+    const existingInv = player.mmorpg.inventory.find(it => it && it.id === itemId);
+    if (existingInv) {
+      existingInv.count = (existingInv.count || 1) + takeCount;
+    } else {
+      player.mmorpg.inventory.push({ id: itemId, count: takeCount });
+    }
+
+    socket.emit('mmorpg_sync', player.mmorpg);
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_craft', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    if (Math.hypot(Number(player.x) - 140, Number(player.y) - (-70)) > 450) {
+      socket.emit('mmorpg_toast', { text: 'Demirci örsüne çok uzaksın!', type: 'warning' });
+      return;
+    }
+    const recipeId = String(data.recipeId || '');
+    const recipe = MmorpgData.SMELTING_RECIPES.find(r => r.id === recipeId) || MmorpgData.FORGING_RECIPES.find(r => r.id === recipeId);
+    if (!recipe) return;
+
+    const smithLvl = player.mmorpg.smithLvl || 1;
+    if (smithLvl < (recipe.reqLvl || 1)) {
+      socket.emit('mmorpg_toast', { text: `Demircilik Seviye ${recipe.reqLvl} gerekiyor!`, type: 'error' });
+      return;
+    }
+
+    for (const inp of recipe.inputs) {
+      const invItem = player.mmorpg.inventory.find(it => it && it.id === inp.id);
+      if (!invItem || (invItem.count || 1) < inp.count) {
+        const def = MmorpgData.ITEMS[inp.id];
+        socket.emit('mmorpg_toast', { text: `Yetersiz malzeme: ${inp.count}x ${def?.name || inp.id}`, type: 'error' });
+        return;
+      }
+    }
+
+    for (const inp of recipe.inputs) {
+      const invIdx = player.mmorpg.inventory.findIndex(it => it && it.id === inp.id);
+      if (invIdx !== -1) {
+        if (player.mmorpg.inventory[invIdx].count > inp.count) {
+          player.mmorpg.inventory[invIdx].count -= inp.count;
+        } else {
+          player.mmorpg.inventory.splice(invIdx, 1);
+        }
+      }
+    }
+
+    const outItem = recipe.output;
+    const existing = player.mmorpg.inventory.find(it => it && it.id === outItem.id && (it.count || 1) < (MmorpgData.ITEMS[outItem.id]?.maxStack || 1));
+    if (existing) {
+      existing.count = (existing.count || 1) + (outItem.count || 1);
+    } else {
+      player.mmorpg.inventory.push({ id: outItem.id, count: outItem.count || 1 });
+    }
+
+    player.mmorpg.smithXp = (player.mmorpg.smithXp || 0) + (recipe.xp || 20);
+    const newSmithLvl = MmorpgData.getLevelFromXp(player.mmorpg.smithXp);
+    if (newSmithLvl > smithLvl) {
+      player.mmorpg.smithLvl = newSmithLvl;
+      socket.emit('mmorpg_level_up', { skill: 'smith', level: newSmithLvl });
+    }
+
+    const outDef = MmorpgData.ITEMS[outItem.id];
+    socket.emit('mmorpg_toast', { text: `Üretildi: ${outDef?.name || outItem.id}! (+${recipe.xp} XP)`, type: 'success' });
+    socket.emit('mmorpg_sync', player.mmorpg);
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_loot_pickup', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    const bagId = String(data.bagId || '');
+    const bag = mmorpgLootBags.get(bagId);
+    if (!bag) return;
+
+    const dist = Math.hypot((Number(player.x) || 0) - bag.x, (Number(player.y) || 0) - bag.y);
+    if (dist > 250) return;
+
+    let pickedAny = false;
+    for (let i = bag.items.length - 1; i >= 0; i--) {
+      const drop = bag.items[i];
+      const itemDef = MmorpgData.ITEMS[drop.id];
+      const maxStack = itemDef?.maxStack || 1;
+      const existing = player.mmorpg.inventory.find(it => it && it.id === drop.id && (it.count || 1) < maxStack);
+      if (existing) {
+        existing.count = (existing.count || 1) + drop.count;
+        bag.items.splice(i, 1);
+        pickedAny = true;
+      } else if (player.mmorpg.inventory.length < 24) {
+        player.mmorpg.inventory.push({ id: drop.id, count: drop.count });
+        bag.items.splice(i, 1);
+        pickedAny = true;
+      }
+    }
+
+    if (bag.gold > 0) {
+      player.mmorpg.gold = (player.mmorpg.gold || 0) + bag.gold;
+      socket.emit('mmorpg_toast', { text: `+${bag.gold} Altın toplandı!`, type: 'gold' });
+      bag.gold = 0;
+      pickedAny = true;
+    }
+
+    if (pickedAny) {
+      socket.emit('mmorpg_sync', player.mmorpg);
+      persistPlayerMmorpg(player);
+    }
+
+    if (bag.items.length === 0 && bag.gold <= 0) {
+      mmorpgLootBags.delete(bagId);
+      io.to('mode:mmorpg').emit('mmorpg_loot_despawn', { bagId });
+    }
+  });
+
+  socket.on('mmorpg_merchant_buy', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    if (Math.hypot(Number(player.x) - 0, Number(player.y) - 130) > 450) return;
+    const itemId = String(data.itemId || '');
+    const count = Math.max(1, Math.min(99, Number(data.count) || 1));
+    const def = MmorpgData.ITEMS[itemId];
+    if (!def) return;
+    const cost = (def.price || 10) * count;
+    if ((player.mmorpg.gold || 0) < cost) {
+      socket.emit('mmorpg_toast', { text: 'Yetersiz altın!', type: 'warning' });
+      return;
+    }
+    if (player.mmorpg.inventory.length >= 24 && !player.mmorpg.inventory.some(it => it && it.id === itemId)) {
+      socket.emit('mmorpg_toast', { text: 'Çantan dolu!', type: 'warning' });
+      return;
+    }
+    player.mmorpg.gold -= cost;
+    const existing = player.mmorpg.inventory.find(it => it && it.id === itemId);
+    if (existing) {
+      existing.count = (existing.count || 1) + count;
+    } else {
+      player.mmorpg.inventory.push({ id: itemId, count });
+    }
+    socket.emit('mmorpg_sync', player.mmorpg);
+    persistPlayerMmorpg(player);
+  });
+
+  socket.on('mmorpg_merchant_sell', (data = {}) => {
+    const player = players.get(socket.id);
+    if (!player || player.mode !== 'mmorpg' || !player.mmorpg) return;
+    if (Math.hypot(Number(player.x) - 0, Number(player.y) - 130) > 450) return;
+    const itemId = String(data.itemId || '');
+    const invIdx = player.mmorpg.inventory.findIndex(it => it && it.id === itemId);
+    if (invIdx === -1) return;
+    const def = MmorpgData.ITEMS[itemId];
+    const count = player.mmorpg.inventory[invIdx].count || 1;
+    const sellPrice = Math.max(1, Math.floor((def?.price || 5) * 0.45)) * count;
+    player.mmorpg.inventory.splice(invIdx, 1);
+    player.mmorpg.gold = (player.mmorpg.gold || 0) + sellPrice;
+    socket.emit('mmorpg_toast', { text: `Satıldı: +${sellPrice} Altın`, type: 'gold' });
+    socket.emit('mmorpg_sync', player.mmorpg);
+    persistPlayerMmorpg(player);
+  });
 
   socket.on('clan_list_get', () => {
     socket.emit('clan_list', getPublicClanList());
@@ -7150,6 +7771,11 @@ io.on('connection', (socket) => {
       saveAccountData(true);
     }
     // Note: Do not leaveClan on disconnect so clans & leadership persist across reconnections/refreshes
+    if (player?.roomId && rooms.has(player.roomId)) {
+      const roomSet = rooms.get(player.roomId);
+      roomSet.delete(socket.id);
+      if (roomSet.size === 0) rooms.delete(player.roomId);
+    }
     players.delete(socket.id);
     for (const [code, party] of parties) {
       const hadMember = party.members.some(member => member.id === socket.id);

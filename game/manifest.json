@@ -16,7 +16,7 @@
   ],
   "screenshots": [
     {
-      "src": "game.jpg",
+      "src": "asset/game.jpg",
       "sizes": "1024x1024",
       "type": "image/jpeg",
       "label": "ForestBrawl gameplay"

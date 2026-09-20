@@ -48,7 +48,7 @@
 <script>
 // ULTRA-EARLY: Replit badge ve benzeri enjekte edilen DOM elemanlarını yok et.
 (function(){
-  var K={gameCanvas:1,'game-ui-layer':1,minimap:1,'kill-feed':1,'dmg-flash':1,'upgrade-overlay':1,'upg-backdrop':1,'upg-notify-btn':1,'death-overlay':1,'spawn-overlay':1,'top-hud':1,'bottom-hud':1,'joy-left':1,'joy-right':1,'inv-bar':1,'lb-panel':1,'ui-top':1,'ui-bottom':1,'toast':1,'boss-bar':1,'biome-indicator':1,'ping-display':1,'fps-display':1,'res-panel':1,'resource-hud':1,'left-stats-stack':1,'kill-flash':1,'kill-notif':1,'rage-overlay':1,'event-banner':1,'streak-hud':1,'shield-hud':1,'lvlup-flash':1,'tab-scoreboard':1,'quick-chat-wheel':1,'build-upg-panel':1,'train-btn':1,'train-stop-hud':1,'loading-screen':1,'tutorial-overlay':1,'quest-panel':1,'ach-popup':1,'spectator-hud':1,'invite-hud-btn':1,'event-meteor-banner':1,'trophy-meta-hud':1,'cave-prompt':1,'ach-panel':1,'bp-panel':1,'dash-btn':1,'snap-settings-panel':1,'entry-consent':1,'clan-game-btn':1,'clan-game-panel':1};
+  var K={gameCanvas:1,'game-ui-layer':1,minimap:1,'kill-feed':1,'dmg-flash':1,'upgrade-overlay':1,'upg-backdrop':1,'upg-notify-btn':1,'death-overlay':1,'spawn-overlay':1,'top-hud':1,'bottom-hud':1,'joy-left':1,'joy-right':1,'inv-bar':1,'lb-panel':1,'ui-top':1,'ui-bottom':1,'toast':1,'boss-bar':1,'biome-indicator':1,'ping-display':1,'fps-display':1,'res-panel':1,'resource-hud':1,'left-stats-stack':1,'kill-flash':1,'kill-notif':1,'rage-overlay':1,'event-banner':1,'streak-hud':1,'shield-hud':1,'lvlup-flash':1,'tab-scoreboard':1,'quick-chat-wheel':1,'build-upg-panel':1,'train-btn':1,'train-stop-hud':1,'loading-screen':1,'tutorial-overlay':1,'quest-panel':1,'ach-popup':1,'spectator-hud':1,'invite-hud-btn':1,'event-meteor-banner':1,'trophy-meta-hud':1,'cave-prompt':1,'ach-panel':1,'bp-panel':1,'dash-btn':1,'snap-settings-panel':1,'entry-consent':1,'clan-game-btn':1,'clan-game-panel':1,'mmorpg-action-bar':1,'mmorpg-top-hud':1,'mmorpg-modals-root':1,'mmo-modal-bag':1,'mmo-modal-char':1,'mmo-modal-skills':1,'mmo-modal-bank':1,'mmo-modal-forge':1,'mmo-modal-merchant':1,'mmo-popover':1,'mmo-lvlup-toast':1};
   function shouldHide(el){
     if(!el||el.nodeType!==1)return false;
     if(el===document.body||el===document.head||el===document.documentElement)return false;
@@ -168,6 +168,8 @@
 </script>
 <link rel="preload" href="asset/tree-forest.png" as="image">
 <script src="networkPhysics.js"></script>
+<script src="mmorpgData.js"></script>
+<script src="mmorpgClient.js"></script>
 <script src="platform.js" defer></script>
 <script>
   let viewportFrame;
@@ -4807,8 +4809,13 @@ setTimeout(triggerViewportResize, 1500);
 const urlParams = new URLSearchParams(window.location.search);
 const playerName = urlParams.get('name') || 'Savaşçı';
 const _clanId = urlParams.get('clanId') || localStorage.getItem('fb_clan_id') || '';
-const _BASE = window.location.pathname.replace(/\/play\.html$/, '/') || '/';
-const _GAME_MODE = urlParams.get('mode') === 'offline' ? 'offline' : 'online';
+const _RAW_MODE = urlParams.get('mode') || urlParams.get('gamemode');
+const _IS_MMORPG = _RAW_MODE === 'mmorpg';
+window._IS_MMORPG = _IS_MMORPG;
+if (_IS_MMORPG) {
+  document.body.classList.add('mode-mmorpg');
+}
+const _GAME_MODE = _RAW_MODE === 'offline' ? 'offline' : (_IS_MMORPG ? 'mmorpg' : 'online');
 const _isMobile = ('ontouchstart' in window || navigator.maxTouchPoints > 0) &&
   (window.innerWidth < 1200 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
 const _lowPowerDevice = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
@@ -5145,7 +5152,7 @@ window.addEventListener('wheel', (e) => {
 
 function _isJoystickUiTouch(touch) {
   if (!touch || typeof touch.clientX !== 'number' || typeof touch.clientY !== 'number') return false;
-  const uiIds = ['joy-left', 'joy-right', 'dash-btn', 'mobile-eat-btn'];
+  const uiIds = ['joy-left', 'joy-right', 'dash-btn', 'mobile-eat-btn', 'mobile-interact-btn'];
   for (const id of uiIds) {
     const el = document.getElementById(id);
     if (!el) continue;
@@ -5340,6 +5347,12 @@ function _buildBgCacheUnsafe() {
   c.save();
   c.scale(sc, sc);
   c.translate(W, W);
+
+  if (window._IS_MMORPG && window.MmorpgClient) {
+    window.MmorpgClient.buildBgCache(c, W, S);
+    c.restore();
+    return;
+  }
 
   // === OCEAN — deep blue with depth gradient ===
   const oceanGrd = c.createRadialGradient(0, 0, 0, 0, 0, W * 1.4);
@@ -11815,7 +11828,14 @@ function updateUI() {
   const mobAppleCount = document.getElementById('mobile-apple-count');
   if (mobAppleCount && mobAppleCount.textContent !== curA) mobAppleCount.textContent = curA;
   const mobEatCount = document.getElementById('mobile-eat-count');
-  if (mobEatCount && mobEatCount.textContent !== curA) mobEatCount.textContent = curA;
+  if (mobEatCount) {
+    if (window._IS_MMORPG && window.MmorpgClient) {
+      const potCount = String(window.MmorpgClient.getPotionCount());
+      if (mobEatCount.textContent !== potCount) mobEatCount.textContent = potCount;
+    } else if (mobEatCount.textContent !== curA) {
+      mobEatCount.textContent = curA;
+    }
+  }
   if (_uiScoreEl && curSc !== _uiLast.score) {
     _uiScoreEl.textContent = formatScore(curSc);
     _uiLast.score = curSc;
@@ -16498,14 +16518,19 @@ function drawEnemy(e) {
     e.state = isMoving ? 'walk' : 'idle';
   }
 
-  let angle = e.angle;
+  let targetAngle = e.angle;
   if (e.state === 'attack' || (e.vx === 0 && e.vy === 0)) {
-    angle = Math.atan2(player.y - e.y, player.x - e.x);
+    targetAngle = Math.atan2(player.y - e.y, player.x - e.x);
   } else if (e.vx !== 0 || e.vy !== 0) {
-    angle = Math.atan2(e.vy, e.vx);
+    targetAngle = Math.atan2(e.vy, e.vx);
   }
-  if (angle == null) angle = 0;
-  e.angle = angle;
+  if (targetAngle == null) targetAngle = 0;
+  let dAngle = targetAngle - (e.angle || 0);
+  while (dAngle > Math.PI) dAngle -= Math.PI * 2;
+  while (dAngle < -Math.PI) dAngle += Math.PI * 2;
+  const _angLerp = 1 - Math.exp(-22 * Math.max(0.001, Math.min(0.1, (_dt || 1) / 60)));
+  e.angle = (e.angle || 0) + dAngle * _angLerp;
+  const angle = e.angle;
 
   ctx.save();
   ctx.translate(e.x, e.y);
@@ -18802,18 +18827,22 @@ function update(timestamp = 0) {
         if (e.hp <= 0 && (!_connected || e._netId === undefined)) { enemies.splice(i, 1); }
         continue;
       }
-      // Butter-smooth exponential interpolation toward server-authoritative mob position (Zero jitter & Zero rubber-banding)
+      // Ultra-smooth real-time extrapolated mob convergence (60/120/144fps stutter-free)
       if (e._targetX !== undefined) {
-        const _tdx = e._targetX - e.x, _tdy = e._targetY - e.y;
-        const _distSq = _tdx * _tdx + _tdy * _tdy;
-        if (_distSq > 750 * 750) {
+        const _mDistSq = (e._targetX - e.x) ** 2 + (e._targetY - e.y) ** 2;
+        if (_mDistSq > 600 * 600) {
           e.x = e._targetX;
           e.y = e._targetY;
         } else {
+          const _timeSince = Math.min(0.12, (wallNow - (e._lastPacketTime || wallNow)) / 1000);
+          const _vxSec = (e.vx || 0) * 20;
+          const _vySec = (e.vy || 0) * 20;
+          const _extX = e._targetX + _vxSec * _timeSince;
+          const _extY = e._targetY + _vySec * _timeSince;
           const _dtSec = Math.max(0.001, Math.min(0.1, (_dt || 1) / 60));
-          const _mobLerp = 1 - Math.exp(-28 * _dtSec);
-          e.x += _tdx * _mobLerp;
-          e.y += _tdy * _mobLerp;
+          const _converge = 1 - Math.exp(-18 * _dtSec);
+          e.x += (_extX - e.x) * _converge;
+          e.y += (_extY - e.y) * _converge;
         }
       }
       if (e.hitFlash > 0) e.hitFlash--;
@@ -19698,8 +19727,13 @@ function update(timestamp = 0) {
     ctx.drawImage(_bgCanvas, -WORLD, -WORLD, WORLD*2, WORLD*2);
   }
 
-  // ── GROUND DETAILS: Direct world-space draw (Instant, perfectly synced with camera) ──
-  drawGroundDetailsDirect(ctx);
+  // ── MMORPG Town Hub, Animated Fixtures & Loot Beams ──
+  if (window._IS_MMORPG && window.MmorpgClient) {
+    window.MmorpgClient.drawWorld(ctx, camX, camY);
+  } else {
+    // ── GROUND DETAILS: Direct world-space draw (Instant, perfectly synced with camera) ──
+    drawGroundDetailsDirect(ctx);
+  }
   drawThorGroundStrikes(ctx, Date.now());
 
   // NOTE: cave hook is called AFTER background so cave portals are not covered
@@ -20354,6 +20388,50 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   _keys[k] = true;
 
+  // ── MMORPG MODE CONTROLS ──
+  if (window._IS_MMORPG) {
+    if (k === 'e') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.interactNearest();
+      return;
+    }
+    if (k === 'b') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.toggleModal('bag');
+      return;
+    }
+    if (k === 'c') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.toggleModal('char');
+      return;
+    }
+    if (k === 'k') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.toggleModal('skills');
+      return;
+    }
+    if (k === 'f' || k === '3') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.useQuickPotion();
+      return;
+    }
+    if (k === '1') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.selectSlot(1);
+      return;
+    }
+    if (k === '2') {
+      e.preventDefault();
+      if (window.MmorpgClient) window.MmorpgClient.selectSlot(2);
+      return;
+    }
+    // Block building placement keys in MMORPG mode
+    if (['v', 'n', 'x'].includes(k)) {
+      e.preventDefault();
+      return;
+    }
+  }
+
   // Q (or custom) — yemek ye
   if (_matchKey(k, _customKeybinds.eat)) eatApple();
 
@@ -20413,6 +20491,10 @@ window.addEventListener('keydown', e => {
   }
 
   if (e.key === 'Escape') {
+    if (window._IS_MMORPG && window.MmorpgClient && window.MmorpgClient.activeModal) {
+      window.MmorpgClient.closeModal();
+      return;
+    }
     if (_qcwOpen) { closeQuickChat(); return; }
     if (_tabOpen) { closeTabScoreboard(); return; }
     const pnl = document.getElementById('snap-settings-panel');
@@ -20593,16 +20675,36 @@ function _doDash() {
     if (!('PointerEvent' in window)) el.addEventListener('touchstart', handler, { passive: false });
     el.addEventListener('click', handler);
   };
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+    const eatOrPotion = () => {
+      if (window._IS_MMORPG && window.MmorpgClient) {
+        window.MmorpgClient.useQuickPotion();
+      } else {
+        eatApple();
+      }
+    };
+    const updateMobileIconsForMode = () => {
+      if (window._IS_MMORPG) {
+        const mobEat = document.getElementById('mobile-eat-btn');
+        if (mobEat) {
+          mobEat.title = 'Hızlı Can İksiri (3 / F)';
+          mobEat.setAttribute('aria-label', 'Can İksiri');
+          const span = mobEat.querySelector('span');
+          if (span) span.textContent = '🧪';
+        }
+      }
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        setupBtn('dash-btn', _doDash);
+        setupBtn('mobile-eat-btn', eatOrPotion);
+        updateMobileIconsForMode();
+      }, { once: true });
+    } else {
       setupBtn('dash-btn', _doDash);
-      setupBtn('mobile-eat-btn', eatApple);
-    }, { once: true });
-  } else {
-    setupBtn('dash-btn', _doDash);
-    setupBtn('mobile-eat-btn', eatApple);
-  }
-})();
+      setupBtn('mobile-eat-btn', eatOrPotion);
+      updateMobileIconsForMode();
+    }
+  })();
 
 // WASD hız vektörünü her frame'de uygula
 function applyWASD() {
@@ -20815,6 +20917,7 @@ function initMultiplayer() {
     randomizationFactor: 0.25,
     forceNew: false,
   });
+  window._socket = _socket;
   const _connectionFallbackTimer = setTimeout(() => {
     if (!_socket.connected && !_connected) {
       initMultiplayerOfflineFallback();
@@ -20883,7 +20986,8 @@ function initMultiplayer() {
       x: player.x, y: player.y,
       hp: player.hp, maxHp: player.maxHp,
       xp: player.xp, gold: player.gold || 0,
-      mode: urlParams.get('gamemode') || 'classic',
+      mode: _IS_MMORPG ? 'mmorpg' : (urlParams.get('gamemode') || 'classic'),
+      mmorpg: (_IS_MMORPG && window.MmorpgClient) ? window.MmorpgClient.loadLocalProfile() : null,
       team: urlParams.get('team') || urlParams.get('partyCode') || '',
       clanId: _clanId,
       partyCode: urlParams.get('partyCode') || '',
@@ -20926,8 +21030,21 @@ function initMultiplayer() {
     }
   });
 
-  _socket.on('welcome', ({ id, players: others, buildings: remoteBuildings, worldSeed, resHp, mobs, isHost: serverIsHost, bountyId: welcomeBountyId, airdrops: welcomeAirdrops, announcement: welcomeAnnouncement }) => {
+  _socket.on('welcome', (welcomeData) => {
+    const { id, players: others, buildings: remoteBuildings, worldSeed, resHp, mobs, isHost: serverIsHost, bountyId: welcomeBountyId, airdrops: welcomeAirdrops, announcement: welcomeAnnouncement, mmorpg, mmorpgLoot } = welcomeData;
     _mySocketId = id;
+    if (_IS_MMORPG && window.MmorpgClient) {
+      if (mmorpg) {
+        window.MmorpgClient.playerData = mmorpg;
+        window.MmorpgClient.saveLocalProfile();
+        window.MmorpgClient.updateHUD();
+      }
+      if (mmorpgLoot && Array.isArray(mmorpgLoot)) {
+        window.MmorpgClient.lootBags.clear();
+        mmorpgLoot.forEach(b => window.MmorpgClient.lootBags.set(b.id, b));
+      }
+      window.MmorpgClient.bindSocketEvents();
+    }
     if (welcomeBountyId !== undefined) _bountyId = welcomeBountyId;
     if (welcomeAirdrops && Array.isArray(welcomeAirdrops)) {
       airdropsList = welcomeAirdrops.map(ad => ({ ...ad, dropY: 0, beamAlpha: 1.0, pulse: 0, shake: 0, hitFlash: 0 }));
@@ -22031,14 +22148,10 @@ function initMultiplayer() {
   const _mobVisibilityAt = new Map();
 
   function _acceptMobSequence(mob, seq, ts) {
-    if (typeof ts === 'number' && ts < (mob._stateAt || 0)) return false;
-    if (typeof seq !== 'number') {
-      if (typeof ts === 'number') mob._stateAt = ts;
-      return true;
-    }
-    if (typeof mob._stateSeq === 'number' && seq <= mob._stateSeq) return false;
-    mob._stateSeq = seq;
-    if (typeof ts === 'number') mob._stateAt = ts;
+    if (typeof ts === 'number' && (mob._stateAt || 0) - ts > 1200) return false;
+    if (typeof seq === 'number' && typeof mob._stateSeq === 'number' && seq < mob._stateSeq && (mob._stateSeq - seq < 500)) return false;
+    if (typeof seq === 'number') mob._stateSeq = Math.max(mob._stateSeq || 0, seq);
+    if (typeof ts === 'number') mob._stateAt = Math.max(mob._stateAt || 0, ts);
     return true;
   }
 
@@ -22108,8 +22221,9 @@ function initMultiplayer() {
         ex.hp = m.hp;
         if (typeof m.maxHp === 'number') ex.maxHp = m.maxHp;
         if (m.hitFlash > 0) ex.hitFlash = m.hitFlash;
-        if (m.angle != null) ex.angle = m.angle;
-        else if (m.vx !== 0 || m.vy !== 0) ex.angle = Math.atan2(m.vy, m.vx);
+        if (m.angle != null) ex._targetAngle = m.angle;
+        else if (m.vx !== 0 || m.vy !== 0) ex._targetAngle = Math.atan2(m.vy, m.vx);
+        ex._lastPacketTime = now;
         ex._lastSeen = now;
         if (m.color) ex.color = m.color;
         if (m.outline) ex.outline = m.outline;
@@ -23804,7 +23918,7 @@ const _trainSockInterval = setInterval(() => {
 
 // Start — socket.io sadece online modda yüklenir (async, sayfa yüklenmesini bloklamaz)
 updateUI();
-if (_GAME_MODE === 'online') {
+if (_GAME_MODE === 'online' || _GAME_MODE === 'mmorpg') {
   const _sioScript = document.createElement('script');
   _sioScript.src = 'socket.io.js';
   _sioScript.async = true;
@@ -23829,6 +23943,9 @@ if (typeof requestIdleCallback === 'function') {
   setTimeout(function(){ if (!_bgReady) _buildBgCache(); }, 0);
 }
 window.dispatchEvent(new Event('forestbrawl:ready'));
+if (window._IS_MMORPG && window.MmorpgClient) {
+  window.MmorpgClient.init();
+}
 requestAnimationFrame(update);
 // Show FPS counter immediately when game loop starts (no need to wait for socket connect)
 if (_fpsEl) { _fpsEl.style.display = ''; _fpsEl.textContent = '⚡ -- FPS'; }

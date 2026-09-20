@@ -1,10 +1,11 @@
-const CACHE_NAME = 'forestbrawl-shell-v9';
+const CACHE_NAME = 'forestbrawl-shell-v10';
 const APP_SHELL = [
   './',
   './index.html',
   './play.html',
   './manifest.json',
   './originalicon.png',
+  './asset/originalicon.png',
   './originalicon-192.png',
   './originalicon-512.png',
   './apple-touch-icon.png',
@@ -13,7 +14,17 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(async cache => {
+      for (const url of APP_SHELL) {
+        try {
+          await cache.add(url);
+        } catch (err) {
+          console.warn('[SW] Caching skipped for:', url, err?.message || err);
+        }
+      }
+    })
+  );
   self.skipWaiting();
 });
 

@@ -2983,6 +2983,26 @@
             transform: translateY(4px) !important;
             box-shadow: 0 2px 0 #315c13, 0 4px 12px rgba(104, 190, 39, 0.35) !important;
         }
+        #play-btn.mode-mmorpg {
+            background: linear-gradient(180deg, #b045e0 0%, #8527be 60%, #581c8c 100%) !important;
+            box-shadow: 0 6px 0 #3d135c, 0 10px 28px rgba(168, 85, 247, 0.55) !important;
+            border-color: #ffd700 !important;
+        }
+        #play-btn.mode-mmorpg:active {
+            box-shadow: 0 2px 0 #3d135c, 0 4px 14px rgba(168, 85, 247, 0.4) !important;
+        }
+        .mode-card {
+            background: rgba(18, 14, 26, 0.85);
+            border: 2px solid rgba(255, 255, 255, 0.12);
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            backdrop-filter: blur(8px);
+        }
+        .mode-card:hover {
+            transform: translateY(-2px);
+        }
+        .mode-card:active {
+            transform: translateY(1px);
+        }
         #play-btn-text {
             font-family: 'Lilita One', cursive !important;
             font-size: clamp(2.4rem, 8vw, 3.2rem) !important;
@@ -4522,6 +4542,35 @@
                 </div>
             </div>
         </button>
+
+        <!-- OYUN MODU SEÇİCİ (DUAL MODE SELECTOR: KLASİK IO vs CURSE OF AROS MMORPG) -->
+        <div class="mode-selector-wrap mb-2.5 w-full">
+            <div class="w-full pl-2 flex justify-between items-center mb-1">
+                <span class="text-white font-black text-xs uppercase tracking-wider">Oyun Modu / Game Mode</span>
+                <span id="mode-active-indicator" class="text-emerald-300 font-black text-[10px] uppercase tracking-wider bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-500/40">🏹 KLASİK ARENA</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 w-full">
+                <!-- 1. KLASİK MOD (IO SURVIVAL) -->
+                <button type="button" id="mode-card-classic" onclick="selectGameMode('classic'); playSfx('click')" class="mode-card active relative p-2.5 rounded-xl border-2 transition-all flex flex-col items-start text-left cursor-pointer overflow-hidden">
+                    <div class="flex items-center gap-1.5 z-10">
+                        <i class="fa-solid fa-shield-halved text-emerald-400 text-sm"></i>
+                        <span class="font-io text-white text-xs sm:text-sm tracking-wide stroke-text">KLASİK IO</span>
+                    </div>
+                    <span class="text-[9px] text-gray-300 font-bold mt-0.5 z-10 leading-tight">Üs Kur, Klan Savaşı & Arena</span>
+                    <span class="mode-badge bg-emerald-500/80 text-black font-black text-[8px] px-1.5 py-0.2 rounded absolute top-1.5 right-1.5 shadow">SURVIVAL</span>
+                </button>
+
+                <!-- 2. FOREST RPG (MMORPG MODU) -->
+                <button type="button" id="mode-card-mmorpg" onclick="selectGameMode('mmorpg'); playSfx('click')" class="mode-card relative p-2.5 rounded-xl border-2 transition-all flex flex-col items-start text-left cursor-pointer overflow-hidden group">
+                    <div class="flex items-center gap-1.5 z-10">
+                        <i class="fa-solid fa-dragon text-purple-300 text-sm group-hover:scale-110 transition-transform"></i>
+                        <span class="font-io text-purple-200 text-xs sm:text-sm tracking-wide stroke-text">FOREST RPG</span>
+                    </div>
+                    <span class="text-[9px] text-purple-200/80 font-bold mt-0.5 z-10 leading-tight">Açık Dünya, Zindan & Bosslar</span>
+                    <span class="mode-badge bg-gradient-to-r from-amber-400 to-purple-500 text-white font-black text-[8px] px-1.5 py-0.2 rounded absolute top-1.5 right-1.5 shadow animate-pulse">✨ FOREST RPG</span>
+                </button>
+            </div>
+        </div>
 
         <!-- DEV 3D PLAY BUTONU -->
         <div class="io-games-play-row">
@@ -9926,6 +9975,59 @@
                 }
             }
         }
+        let _selectedGameMode = localStorage.getItem('fb_game_mode') || 'classic';
+        function selectGameMode(mode) {
+            _selectedGameMode = mode === 'mmorpg' ? 'mmorpg' : 'classic';
+            localStorage.setItem('fb_game_mode', _selectedGameMode);
+            updateModeUI();
+        }
+
+        function updateModeUI() {
+            const classicBtn = document.getElementById('mode-card-classic');
+            const mmorpgBtn = document.getElementById('mode-card-mmorpg');
+            const playBtn = document.getElementById('play-btn');
+            const playBtnText = document.getElementById('play-btn-text');
+            const indicator = document.getElementById('mode-active-indicator');
+
+            if (!classicBtn || !mmorpgBtn || !playBtn) return;
+
+            if (_selectedGameMode === 'mmorpg') {
+                classicBtn.classList.remove('active');
+                classicBtn.style.borderColor = 'rgba(255,255,255,0.15)';
+                classicBtn.style.background = 'rgba(15, 12, 22, 0.7)';
+                classicBtn.style.boxShadow = 'none';
+
+                mmorpgBtn.classList.add('active');
+                mmorpgBtn.style.borderColor = '#c084fc';
+                mmorpgBtn.style.background = 'linear-gradient(135deg, rgba(88, 28, 140, 0.6), rgba(35, 12, 58, 0.85))';
+                mmorpgBtn.style.boxShadow = '0 0 16px rgba(192, 132, 252, 0.45), inset 0 0 12px rgba(192, 132, 252, 0.2)';
+
+                playBtn.classList.add('mode-mmorpg');
+                if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'FOREST RPG' : 'RPG DÜNYASINA GİR';
+                if (indicator) {
+                    indicator.textContent = '⚔️ FOREST RPG DÜNYASI';
+                    indicator.className = 'text-purple-300 font-black text-[10px] uppercase tracking-wider bg-purple-950/70 px-2 py-0.5 rounded border border-purple-500/40';
+                }
+            } else {
+                mmorpgBtn.classList.remove('active');
+                mmorpgBtn.style.borderColor = 'rgba(255,255,255,0.15)';
+                mmorpgBtn.style.background = 'rgba(15, 12, 22, 0.7)';
+                mmorpgBtn.style.boxShadow = 'none';
+
+                classicBtn.classList.add('active');
+                classicBtn.style.borderColor = '#79D138';
+                classicBtn.style.background = 'linear-gradient(135deg, rgba(35, 75, 15, 0.6), rgba(15, 30, 8, 0.85))';
+                classicBtn.style.boxShadow = '0 0 16px rgba(121, 209, 56, 0.4), inset 0 0 12px rgba(121, 209, 56, 0.2)';
+
+                playBtn.classList.remove('mode-mmorpg');
+                if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'Play' : 'Oyna';
+                if (indicator) {
+                    indicator.textContent = '🏹 KLASİK ARENA';
+                    indicator.className = 'text-emerald-300 font-black text-[10px] uppercase tracking-wider bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-500/40';
+                }
+            }
+        }
+
         function startDirectGame() {
             const input = document.getElementById('name-input');
             const name = _authUser ? _authUser.username : ((input.value.trim()) || 'forestbrawl');
@@ -9938,12 +10040,16 @@
             if (txt) txt.textContent = (getCurrentLang() === 'en') ? 'Loading...' : 'Bağlanılıyor...';
             
             playSfx('pop');
-            triggerToast((getCurrentLang() === 'en') ? 'Connecting to Arena...' : 'Savaş Alanına Bağlanılıyor...', 'fa-play');
+            const targetMode = _selectedGameMode === 'mmorpg' ? 'mmorpg' : 'online';
+            const toastMsg = _selectedGameMode === 'mmorpg'
+                ? ((getCurrentLang() === 'en') ? 'Entering ForestRPG Realm...' : 'ForestRPG Dünyasına Giriliyor...')
+                : ((getCurrentLang() === 'en') ? 'Connecting to Arena...' : 'Savaş Alanına Bağlanılıyor...');
+            triggerToast(toastMsg, _selectedGameMode === 'mmorpg' ? 'fa-dragon' : 'fa-play');
 
             setTimeout(() => {
                 const clanId = localStorage.getItem('fb_clan_id') || '';
                 const partyCode = new URLSearchParams(window.location.search).get('partyCode') || sessionStorage.getItem('fb_party_code') || '';
-                window.location.href = `play.html?name=${encodeURIComponent(name)}&skin=${encodeURIComponent(_currentSkin)}&wepSkin=${encodeURIComponent(_equippedWeapon)}${clanId ? '&clanId=' + encodeURIComponent(clanId) : ''}&mode=online${partyCode ? '&partyCode=' + encodeURIComponent(partyCode) : ''}`;
+                window.location.href = `play.html?name=${encodeURIComponent(name)}&skin=${encodeURIComponent(_currentSkin)}&wepSkin=${encodeURIComponent(_equippedWeapon)}${clanId ? '&clanId=' + encodeURIComponent(clanId) : ''}&mode=${targetMode}${partyCode ? '&partyCode=' + encodeURIComponent(partyCode) : ''}`;
             }, 300);
         }
 
@@ -11458,6 +11564,7 @@
             loadServerCosmetics();
             setInterval(loadServerCosmetics, 60000);
             updateMainScreenCharacter();
+            updateModeUI();
             
             checkAuthStatus();
             if (_authToken) loadInviteEventFromServer();
