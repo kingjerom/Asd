@@ -4810,12 +4810,19 @@ const urlParams = new URLSearchParams(window.location.search);
 const playerName = urlParams.get('name') || 'Savaşçı';
 const _clanId = urlParams.get('clanId') || localStorage.getItem('fb_clan_id') || '';
 const _RAW_MODE = urlParams.get('mode') || urlParams.get('gamemode');
+const _RPG_MODE_LOCKED = true;
 const _IS_MMORPG = _RAW_MODE === 'mmorpg';
 window._IS_MMORPG = _IS_MMORPG;
-if (_IS_MMORPG) {
+if (_IS_MMORPG && _RPG_MODE_LOCKED) {
+  const _lockedTarget = '/game/';
+  if (window.location.pathname.endsWith('/play.html')) {
+    window.location.replace(_lockedTarget + '?mode_locked=mmorpg');
+  }
+}
+if (_IS_MMORPG && !_RPG_MODE_LOCKED) {
   document.body.classList.add('mode-mmorpg');
 }
-const _GAME_MODE = _RAW_MODE === 'offline' ? 'offline' : (_IS_MMORPG ? 'mmorpg' : 'online');
+const _GAME_MODE = _RAW_MODE === 'offline' ? 'offline' : (_IS_MMORPG && !_RPG_MODE_LOCKED ? 'mmorpg' : 'online');
 const _isMobile = ('ontouchstart' in window || navigator.maxTouchPoints > 0) &&
   (window.innerWidth < 1200 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
 const _lowPowerDevice = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||

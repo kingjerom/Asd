@@ -9976,8 +9976,18 @@
             }
         }
         let _selectedGameMode = localStorage.getItem('fb_game_mode') || 'classic';
+        const _RPG_MODE_LOCKED = true;
+
         function selectGameMode(mode) {
-            _selectedGameMode = mode === 'mmorpg' ? 'mmorpg' : 'classic';
+            if (mode === 'mmorpg') {
+                _selectedGameMode = 'classic';
+                localStorage.setItem('fb_game_mode', _selectedGameMode);
+                updateModeUI();
+                triggerToast((getCurrentLang() === 'en') ? 'Forest RPG is locked.' : 'Forest RPG kilitli.', 'fa-lock');
+                return;
+            }
+
+            _selectedGameMode = 'classic';
             localStorage.setItem('fb_game_mode', _selectedGameMode);
             updateModeUI();
         }
@@ -9991,29 +10001,27 @@
 
             if (!classicBtn || !mmorpgBtn || !playBtn) return;
 
+            mmorpgBtn.classList.remove('active');
+            mmorpgBtn.style.borderColor = 'rgba(255,255,255,0.15)';
+            mmorpgBtn.style.background = 'rgba(15, 12, 22, 0.7)';
+            mmorpgBtn.style.boxShadow = 'none';
+            mmorpgBtn.style.opacity = '0.6';
+            mmorpgBtn.style.filter = 'grayscale(0.2)';
+            mmorpgBtn.setAttribute('aria-disabled', 'true');
+
             if (_selectedGameMode === 'mmorpg') {
                 classicBtn.classList.remove('active');
                 classicBtn.style.borderColor = 'rgba(255,255,255,0.15)';
                 classicBtn.style.background = 'rgba(15, 12, 22, 0.7)';
                 classicBtn.style.boxShadow = 'none';
 
-                mmorpgBtn.classList.add('active');
-                mmorpgBtn.style.borderColor = '#c084fc';
-                mmorpgBtn.style.background = 'linear-gradient(135deg, rgba(88, 28, 140, 0.6), rgba(35, 12, 58, 0.85))';
-                mmorpgBtn.style.boxShadow = '0 0 16px rgba(192, 132, 252, 0.45), inset 0 0 12px rgba(192, 132, 252, 0.2)';
-
-                playBtn.classList.add('mode-mmorpg');
-                if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'FOREST RPG' : 'RPG DÜNYASINA GİR';
+                playBtn.classList.remove('mode-mmorpg');
+                if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'Play' : 'Oyna';
                 if (indicator) {
-                    indicator.textContent = '⚔️ FOREST RPG DÜNYASI';
-                    indicator.className = 'text-purple-300 font-black text-[10px] uppercase tracking-wider bg-purple-950/70 px-2 py-0.5 rounded border border-purple-500/40';
+                    indicator.textContent = '🔒 RPG KİLİTLİ';
+                    indicator.className = 'text-amber-300 font-black text-[10px] uppercase tracking-wider bg-amber-950/70 px-2 py-0.5 rounded border border-amber-500/40';
                 }
             } else {
-                mmorpgBtn.classList.remove('active');
-                mmorpgBtn.style.borderColor = 'rgba(255,255,255,0.15)';
-                mmorpgBtn.style.background = 'rgba(15, 12, 22, 0.7)';
-                mmorpgBtn.style.boxShadow = 'none';
-
                 classicBtn.classList.add('active');
                 classicBtn.style.borderColor = '#79D138';
                 classicBtn.style.background = 'linear-gradient(135deg, rgba(35, 75, 15, 0.6), rgba(15, 30, 8, 0.85))';
@@ -10040,6 +10048,12 @@
             if (txt) txt.textContent = (getCurrentLang() === 'en') ? 'Loading...' : 'Bağlanılıyor...';
             
             playSfx('pop');
+            if (_RPG_MODE_LOCKED && _selectedGameMode === 'mmorpg') {
+                triggerToast((getCurrentLang() === 'en') ? 'Forest RPG is locked.' : 'Forest RPG kilitli.', 'fa-lock');
+                if (btn) btn.style.pointerEvents = 'auto';
+                if (txt) txt.textContent = (getCurrentLang() === 'en') ? 'Play' : 'Oyna';
+                return;
+            }
             const targetMode = _selectedGameMode === 'mmorpg' ? 'mmorpg' : 'online';
             const toastMsg = _selectedGameMode === 'mmorpg'
                 ? ((getCurrentLang() === 'en') ? 'Entering ForestRPG Realm...' : 'ForestRPG Dünyasına Giriliyor...')
