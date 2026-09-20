@@ -4859,6 +4859,11 @@ const _fpsArr = [];
 const _fpsSamples = _fpsBuf;
 let _lastFrameTs = 0, _fpsCheckTimer = 0, _fpsDisplay = 0, _fpsDisplayTimer = 0;
 
+var _BASE = (typeof window !== 'undefined' && window.location && window.location.pathname)
+  ? window.location.pathname.replace(/\/[^/]*$/, '/') || '/'
+  : '/';
+window._BASE = _BASE;
+
 // Static sprite cache. Images are loaded once and reused by the renderer.
 const _SPRITE_CACHE = new Map();
 const _MOB_SPRITES = new Map();
@@ -18386,6 +18391,7 @@ function resolveEntitySolidCollision(e, isBoss) {
 let _gameLoopRaf = null;
 function update(timestamp = 0) {
   _gameLoopRaf = requestAnimationFrame(update);
+  const wallNow = Date.now();
   // Let rAF match the display (60/120/144). Skipping frames under 14ms caused stutter/flicker.
   const _elapsed = _lastFrameTs ? timestamp - _lastFrameTs : 16.67;
   if (_elapsed > 0 && _elapsed < 1) return;
