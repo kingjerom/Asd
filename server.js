@@ -33,6 +33,7 @@ function loadDotEnv(filePath) {
 loadDotEnv(path.join(__dirname, '.env'));
 
 const PORT = Number(process.env.PORT || 3000);
+const RPG_MODE_LOCKED = true;
 const root = path.join(__dirname, 'game');
 const players = new Map();
 const buildings = new Map();
@@ -6046,6 +6047,18 @@ io.on('connection', (socket) => {
     }
     const authUser = verifyToken(data.token);
     const playerName = authUser ? authUser.username : (String(data.name || 'forestbrawl').trim().slice(0, 20) || 'forestbrawl');
+    const isMmorpg = data.mode === 'mmorpg';
+    if (isMmorpg && RPG_MODE_LOCKED) {
+      socket.emit('server_announce', {
+        message: 'Forest RPG şu an test aşamasında. Giriş kapalı.',
+        msg: 'Forest RPG şu an test aşamasında. Giriş kapalı.',
+        text: 'Forest RPG şu an test aşamasında. Giriş kapalı.',
+        level: 'warning',
+        title: 'RPG KİLİTLİ'
+      });
+      socket.disconnect(true);
+      return;
+    }
     if (isClientBanned(clientIp, playerName)) {
       socket.emit('server_announce', { message: 'Bu hesap veya IP adresi yasaklanmıştır.', msg: 'Bu hesap veya IP adresi yasaklanmıştır.', text: 'Bu hesap veya IP adresi yasaklanmıştır.', level: 'warning', title: 'YASAKLANDINIZ' });
       socket.disconnect(true);
@@ -6065,7 +6078,6 @@ io.on('connection', (socket) => {
     const authorizedSkin = authUser && equippedSkin && canEquipShopItem(authUser, 'deriler', equippedSkin)
       ? equippedSkin
       : (authUser ? (canEquipShopItem(authUser, 'deriler', requestedSkin) ? requestedSkin : 'wolf') : requestedSkin);
-    const isMmorpg = data.mode === 'mmorpg';
     const gameMode = isMmorpg ? 'mmorpg' : 'online';
     let mmorpgProfile = null;
     if (isMmorpg) {
