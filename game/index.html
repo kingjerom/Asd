@@ -4561,13 +4561,13 @@
                 </button>
 
                 <!-- 2. FOREST RPG (MMORPG MODU) -->
-                <button type="button" id="mode-card-mmorpg" onclick="selectGameMode('mmorpg'); playSfx('click')" class="mode-card relative p-2.5 rounded-xl border-2 transition-all flex flex-col items-start text-left cursor-pointer overflow-hidden group">
+                <button type="button" id="mode-card-mmorpg" onclick="selectGameMode('mmorpg'); playSfx('click')" class="mode-card relative p-2.5 rounded-xl border-2 transition-all flex flex-col items-start text-left cursor-pointer overflow-hidden group opacity-50 grayscale" aria-disabled="true">
                     <div class="flex items-center gap-1.5 z-10">
-                        <i class="fa-solid fa-dragon text-purple-300 text-sm group-hover:scale-110 transition-transform"></i>
-                        <span class="font-io text-purple-200 text-xs sm:text-sm tracking-wide stroke-text">FOREST RPG</span>
+                        <i class="fa-solid fa-lock text-gray-300 text-sm"></i>
+                        <span class="font-io text-gray-300 text-xs sm:text-sm tracking-wide stroke-text">FOREST RPG</span>
                     </div>
-                    <span class="text-[9px] text-purple-200/80 font-bold mt-0.5 z-10 leading-tight">Açık Dünya, Zindan & Bosslar</span>
-                    <span class="mode-badge bg-gradient-to-r from-amber-400 to-purple-500 text-white font-black text-[8px] px-1.5 py-0.2 rounded absolute top-1.5 right-1.5 shadow animate-pulse">✨ FOREST RPG</span>
+                    <span class="text-[9px] text-gray-400 font-bold mt-0.5 z-10 leading-tight">Test aşamasında kapalı</span>
+                    <span class="mode-badge bg-gray-700 text-white font-black text-[8px] px-1.5 py-0.2 rounded absolute top-1.5 right-1.5 shadow">🔒 LOCKED</span>
                 </button>
             </div>
         </div>
@@ -9975,11 +9975,14 @@
                 }
             }
         }
-        let _selectedGameMode = localStorage.getItem('fb_game_mode') || 'classic';
         const _RPG_MODE_LOCKED = true;
+        let _selectedGameMode = _RPG_MODE_LOCKED ? 'classic' : (localStorage.getItem('fb_game_mode') || 'classic');
+        if (_RPG_MODE_LOCKED && localStorage.getItem('fb_game_mode') === 'mmorpg') {
+            localStorage.setItem('fb_game_mode', 'classic');
+        }
 
         function selectGameMode(mode) {
-            if (mode === 'mmorpg') {
+            if (_RPG_MODE_LOCKED) {
                 _selectedGameMode = 'classic';
                 localStorage.setItem('fb_game_mode', _selectedGameMode);
                 updateModeUI();
@@ -9987,7 +9990,7 @@
                 return;
             }
 
-            _selectedGameMode = 'classic';
+            _selectedGameMode = mode === 'mmorpg' ? 'mmorpg' : 'classic';
             localStorage.setItem('fb_game_mode', _selectedGameMode);
             updateModeUI();
         }
@@ -10001,38 +10004,34 @@
 
             if (!classicBtn || !mmorpgBtn || !playBtn) return;
 
+            mmorpgBtn.disabled = true;
+            mmorpgBtn.style.pointerEvents = 'none';
+            mmorpgBtn.style.opacity = '0.5';
+            mmorpgBtn.style.filter = 'grayscale(0.45) saturate(0.7)';
+            mmorpgBtn.style.cursor = 'not-allowed';
+            mmorpgBtn.style.transform = 'none';
+            mmorpgBtn.setAttribute('aria-disabled', 'true');
             mmorpgBtn.classList.remove('active');
             mmorpgBtn.style.borderColor = 'rgba(255,255,255,0.15)';
             mmorpgBtn.style.background = 'rgba(15, 12, 22, 0.7)';
             mmorpgBtn.style.boxShadow = 'none';
-            mmorpgBtn.style.opacity = '0.6';
-            mmorpgBtn.style.filter = 'grayscale(0.2)';
-            mmorpgBtn.setAttribute('aria-disabled', 'true');
+            mmorpgBtn.querySelector('span.font-io')?.classList.add('text-gray-300');
+            mmorpgBtn.querySelector('span.font-io')?.classList.remove('text-purple-200');
 
-            if (_selectedGameMode === 'mmorpg') {
-                classicBtn.classList.remove('active');
-                classicBtn.style.borderColor = 'rgba(255,255,255,0.15)';
-                classicBtn.style.background = 'rgba(15, 12, 22, 0.7)';
-                classicBtn.style.boxShadow = 'none';
+            classicBtn.disabled = false;
+            classicBtn.style.pointerEvents = 'auto';
+            classicBtn.style.opacity = '1';
+            classicBtn.style.cursor = 'pointer';
+            classicBtn.classList.add('active');
+            classicBtn.style.borderColor = '#79D138';
+            classicBtn.style.background = 'linear-gradient(135deg, rgba(35, 75, 15, 0.6), rgba(15, 30, 8, 0.85))';
+            classicBtn.style.boxShadow = '0 0 16px rgba(121, 209, 56, 0.4), inset 0 0 12px rgba(121, 209, 56, 0.2)';
 
-                playBtn.classList.remove('mode-mmorpg');
-                if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'Play' : 'Oyna';
-                if (indicator) {
-                    indicator.textContent = '🔒 RPG KİLİTLİ';
-                    indicator.className = 'text-amber-300 font-black text-[10px] uppercase tracking-wider bg-amber-950/70 px-2 py-0.5 rounded border border-amber-500/40';
-                }
-            } else {
-                classicBtn.classList.add('active');
-                classicBtn.style.borderColor = '#79D138';
-                classicBtn.style.background = 'linear-gradient(135deg, rgba(35, 75, 15, 0.6), rgba(15, 30, 8, 0.85))';
-                classicBtn.style.boxShadow = '0 0 16px rgba(121, 209, 56, 0.4), inset 0 0 12px rgba(121, 209, 56, 0.2)';
-
-                playBtn.classList.remove('mode-mmorpg');
-                if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'Play' : 'Oyna';
-                if (indicator) {
-                    indicator.textContent = '🏹 KLASİK ARENA';
-                    indicator.className = 'text-emerald-300 font-black text-[10px] uppercase tracking-wider bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-500/40';
-                }
+            playBtn.classList.remove('mode-mmorpg');
+            if (playBtnText) playBtnText.textContent = (getCurrentLang() === 'en') ? 'Play' : 'Oyna';
+            if (indicator) {
+                indicator.textContent = '🔒 RPG KİLİTLİ';
+                indicator.className = 'text-amber-300 font-black text-[10px] uppercase tracking-wider bg-amber-950/70 px-2 py-0.5 rounded border border-amber-500/40';
             }
         }
 
