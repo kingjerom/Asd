@@ -6485,7 +6485,9 @@
         function persistPlayerProfileState() {
             const owned = getOwnedItems();
             const equipped = getEquippedItems();
-            const xp = getPlayerTotalXp();
+            const savedXp = Number(localStorage.getItem('fb_user_xp') || localStorage.getItem('fb_total_xp') || '0') || 0;
+            const authXp = Number(_authUser?.xp ?? 0) || 0;
+            const xp = Math.max(savedXp, authXp, Number(getPlayerTotalXp()) || 0);
             const snapshot = {
                 username: document.getElementById('name-input')?.value?.trim() || _authUser?.username || localStorage.getItem('fb_name') || 'forestbrawl',
                 gold: getPlayerGold(),
@@ -6503,14 +6505,15 @@
             localStorage.setItem('fb_acc_owned', JSON.stringify(owned));
             localStorage.setItem('fb_acc_equipped', JSON.stringify(equipped));
             localStorage.setItem('fb_profile', JSON.stringify(snapshot));
-            localStorage.setItem('fb_user_xp', String(xp));
+            setAuthoritativeXp(xp, { updateAuth: true, source: 'local' });
             localStorage.setItem('fb_name', snapshot.username);
             localStorage.setItem('fb_skin', _currentSkin);
             localStorage.setItem('fb_weapon_skin', _equippedWeapon);
             localStorage.setItem('fb_profile_avatar', _profileAvatar);
             localStorage.setItem('fb_profile_frame', _profileFrame);
             if (_authUser) {
-                localStorage.setItem('fb_auth_user', JSON.stringify({ ..._authUser, username: _authUser.username, xp, coins: snapshot.gold, gold: snapshot.gold, rankId: snapshot.rankId, ownedItems: owned, equippedItems: equipped }));
+                const safeXp = Math.max(Number(_authUser.xp ?? 0) || 0, xp);
+                localStorage.setItem('fb_auth_user', JSON.stringify({ ..._authUser, username: _authUser.username, xp: safeXp, coins: snapshot.gold, gold: snapshot.gold, rankId: snapshot.rankId, ownedItems: owned, equippedItems: equipped }));
                 updateHeaderProfile({ ..._authUser, xp, ownedItems: owned, equippedItems: equipped });
                 syncAccountState({ coins: snapshot.gold, ownedItems: owned, equippedItems: equipped });
             }
@@ -6551,7 +6554,9 @@
                     if (equipped.profil_avatar) _profileAvatar = equipped.profil_avatar;
                     if (equipped.profil_efekt) _equippedEffect = equipped.profil_efekt;
                     if (equipped.profil_cerceve) _profileFrame = equipped.profil_cerceve;
-                    if (typeof user.xp === 'number') localStorage.setItem('fb_user_xp', String(user.xp));
+                    if (typeof user.xp === 'number') {
+                        setAuthoritativeXp(user.xp, { updateAuth: false, source: 'server' });
+                    }
                     if (typeof user.coins === 'number') setPlayerGold(user.coins);
                 }
                 localStorage.setItem('fb_skin', _currentSkin);
@@ -6632,7 +6637,7 @@
                     if (_authUser.coins != null) setPlayerGold(_authUser.coins);
                     if (_authUser.ownedItems) localStorage.setItem('fb_acc_owned', JSON.stringify(_authUser.ownedItems));
                     if (_authUser.equippedItems) localStorage.setItem('fb_acc_equipped', JSON.stringify(_authUser.equippedItems));
-                    if (typeof _authUser.xp === 'number') localStorage.setItem('fb_user_xp', String(_authUser.xp));
+                    if (typeof _authUser.xp === 'number') setAuthoritativeXp(_authUser.xp, { updateAuth: true, source: 'server' });
                     
                     document.getElementById('name-input').value = _authUser.username;
                     localStorage.setItem('fb_name', _authUser.username);
@@ -6700,7 +6705,7 @@
                     if (_authUser.coins != null) setPlayerGold(_authUser.coins);
                     if (_authUser.ownedItems) localStorage.setItem('fb_acc_owned', JSON.stringify(_authUser.ownedItems));
                     if (_authUser.equippedItems) localStorage.setItem('fb_acc_equipped', JSON.stringify(_authUser.equippedItems));
-                    if (typeof _authUser.xp === 'number') localStorage.setItem('fb_user_xp', String(_authUser.xp));
+                    if (typeof _authUser.xp === 'number') setAuthoritativeXp(_authUser.xp, { updateAuth: true, source: 'server' });
                     
                     document.getElementById('name-input').value = _authUser.username;
                     localStorage.setItem('fb_name', _authUser.username);
@@ -6738,8 +6743,25 @@
         const RANK_XP_THRESHOLDS = Array.from({ length: 100 }, (_, index) => index === 0 ? 0 : Math.round(500 * Math.pow(index, 2.05)));
 
         function getPlayerTotalXp() {
-            if (_authUser && typeof _authUser.xp === 'number') return _authUser.xp;
-            return parseInt(localStorage.getItem('fb_user_xp') || localStorage.getItem('fb_total_xp') || '0', 10);
+            const authXp = _authUser && typeof _authUser.xp === 'number' ? Number(_authUser.xp) || 0 : 0;
+            const storedXp = parseInt(localStorage.getItem('fb_user_xp') || localStorage.getItem('fb_total_xp') || '0', 10) || 0;
+            return Math.max(authXp, storedXp);
+        }
+
+        function setAuthoritativeXp(nextXp, { updateAuth = true, source = 'server' } = {}) {
+            const safeValue = Math.max(0, Number(nextXp) || 0);
+            const storedXp = parseInt(localStorage.getItem('fb_user_xp') || localStorage.getItem('fb_total_xp') || '0', 10) || 0;
+            const finalXp = (source === 'server' || safeValue >= storedXp) ? safeValue : storedXp;
+
+            localStorage.setItem('fb_user_xp', String(finalXp));
+            localStorage.setItem('fb_total_xp', String(finalXp));
+
+            if (updateAuth && _authUser) {
+                _authUser.xp = Math.max(Number(_authUser.xp ?? 0) || 0, finalXp);
+                localStorage.setItem('fb_auth_user', JSON.stringify(_authUser));
+            }
+
+            return finalXp;
         }
 
         function getRankIdByXp(xp) {

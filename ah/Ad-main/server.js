@@ -4620,12 +4620,15 @@ function broadcastMobIds() {
 }
 
 // The server owns mob positions so every connected player renders the same world.
+let lastMobTickAt = Date.now();
 setInterval(() => {
   const hasSpectators = [...io.sockets.sockets.values()].some(client => client.data.isSpectator);
   if (players.size === 0 && !hasSpectators) return;
   ensureMobs();
   const changed = [];
   const now = Date.now();
+  const tickScale = Math.max(0.5, Math.min(2, (now - lastMobTickAt) / 100));
+  lastMobTickAt = now;
   for (const mob of mobs.values()) {
     mob.stateSeq = (mob.stateSeq || 0) + 1;
     mob.stateAt = now;
@@ -4879,8 +4882,8 @@ setInterval(() => {
       mob.vy = Math.sin(mob.wanderAngle) * wspd;
     }
 
-    mob.x += mob.vx;
-    mob.y += mob.vy;
+    mob.x += mob.vx * tickScale;
+    mob.y += mob.vy * tickScale;
 
     // Solid collision push-out against resources (trees, rocks, gold)
     const nearbyObstacles = nearbyServerObstacles(mob.x, mob.y, mob.radius + 60);
@@ -6815,7 +6818,13 @@ io.on('connection', (socket) => {
       sourceY = Number(turret.y) || 0;
       range = 260;
     }
-    const distance = Math.hypot(sourceX - mob.x, sourceY - mob.y);
+    // The client renders a short interpolation behind the authoritative mob.
+    // Compensate only for the attacker's recent state age, with a strict cap.
+    const stateAgeMs = Math.max(0, Math.min(250, now - (Number(attacker.stateAt) || now)));
+    const lagScale = stateAgeMs / 100;
+    const validationMobX = mob.x + (mob.vx || 0) * lagScale;
+    const validationMobY = mob.y + (mob.vy || 0) * lagScale;
+    const distance = Math.hypot(sourceX - validationMobX, sourceY - validationMobY);
     const weapon = Number(attacker.weapon) === 2 ? 2 : 1;
     const turretWeaponRange = weapon === 2 ? 170 : 155;
     if (distance > range + (mob.radius || 0) + (data.buildingId ? 40 : 0)) return;
@@ -6827,7 +6836,11 @@ io.on('connection', (socket) => {
     mob.chaseUntil = now + MOB_CHASE_TIMEOUT;
 
     mob.stateSeq = (mob.stateSeq || 0) + 1;
-    io.emit('mob_update', { id: mob.id, seq: mob.stateSeq, hp: mob.hp, maxHp: mob.maxHp, hitFlash: 8, targetId: socket.id });
+    io.emit('mob_update', {
+      id: mob.id, seq: mob.stateSeq, ts: now, x: mob.x, y: mob.y,
+      vx: mob.vx, vy: mob.vy, angle: mob.angle,
+      hp: mob.hp, maxHp: mob.maxHp, hitFlash: 8, targetId: socket.id
+    });
 
     if (mob.hp <= 0) {
       mobs.delete(mob.id);
