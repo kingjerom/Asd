@@ -7445,26 +7445,26 @@ function isActiveMobShape(shape) {
 }
 
 // ============================================================
-// AGE / XP PROGRESSION — non-linear, gets harder each age
+// AGE / GOLD PROGRESSION — non-linear, gets harder each age
 // ============================================================
-// Cumulative XP needed to REACH each age (index = age-1)
-const AGE_XP_TABLE = [0, 400, 1050, 2100, 3600, 5600, 8500, 12500, 18000, 25500, 36000];
-// XP per age gap: 400, 650, 1050, 1500, 2000, 2900, 4000, 5500, 7500, 10500…
+// Cumulative gold collected needed to REACH each age (index = age-1).
+// The curve is intentionally steep so early gold cannot rush progression.
+const AGE_GOLD_TABLE = [0, 300, 900, 2000, 4000, 7000, 11000, 17000, 25000, 40000, 65000];
 
-function getAge(xp) {
+function getAge(goldCollected) {
   let age = 1;
-  for (let i = 1; i < AGE_XP_TABLE.length; i++) {
-    if (xp >= AGE_XP_TABLE[i]) age = i + 1; else break;
+  for (let i = 1; i < AGE_GOLD_TABLE.length; i++) {
+    if (goldCollected >= AGE_GOLD_TABLE[i]) age = i + 1; else break;
   }
   return age;
 }
-function getAgeFill(xp) {
-  const age  = getAge(xp);
+function getAgeFill(goldCollected) {
+  const age  = getAge(goldCollected);
   const idx  = age - 1;
-  const xpS  = AGE_XP_TABLE[idx] || 0;
-  const xpE  = AGE_XP_TABLE[idx + 1];
-  if (!xpE) return 100;
-  return Math.min(100, ((xp - xpS) / (xpE - xpS)) * 100);
+  const goldS  = AGE_GOLD_TABLE[idx] || 0;
+  const goldE  = AGE_GOLD_TABLE[idx + 1];
+  if (!goldE) return 100;
+  return Math.min(100, ((goldCollected - goldS) / (goldE - goldS)) * 100);
 }
 
 // ============================================================
@@ -8760,7 +8760,7 @@ function spawnEnemy() {
     const biomeMobs = ACTIVE_ENEMY_TYPES.filter(m => m.biome === biome);
     const src  = biomeMobs.length > 0 ? biomeMobs : ACTIVE_ENEMY_TYPES.filter(m => m.biome === 'forest');
     if (!src || src.length === 0) return;
-    const curAge  = getAge(player.xp);
+    const curAge  = getAge(player.gold);
     // Unlock one tier every 2 ages so higher biome enemies appear gradually
     const maxTier = Math.min(Math.floor((curAge - 1) / 2), src.length - 1);
     const t = src[Math.floor(Math.random() * (maxTier + 1))];
@@ -11847,6 +11847,7 @@ function updateUI() {
       }
     }
   }
+  if (typeof updateXP === 'function') updateXP();
 }
 let _bldBadgeEls = null, _bldLastCounts = null;
 // Cached HP values — updateHpBar is called every frame, skip DOM write when nothing changed
@@ -11985,7 +11986,7 @@ let _xpDirty = false;
 let _xpFlushCounter = 0;
 function updateXP() {
   // Level-up kontrolü anında çalışır (hesaplama, DOM yazısı değil)
-  const age = getAge(player.xp);
+  const age = getAge(player.gold);
   if (age > _prevAge) {
     _prevAge = age;
     floatingTexts.push({ x: player.x, y: player.y - 60, text: '⬆️ AGE ' + age + '!', alpha: 1, life: 55, color: '#ffd700' });
@@ -12000,17 +12001,17 @@ function _flushXP() {
   if (_xpFlushCounter < 8) return; // Flush every 8 frames instead of immediately
   _xpFlushCounter = 0;
   _xpDirty = false;
-  const age  = getAge(player.xp);
-  const fill = getAgeFill(player.xp);
+  const age  = getAge(player.gold);
+  const fill = getAgeFill(player.gold);
   const xpFill = document.getElementById('xp-fill');
   const ageText = document.getElementById('age-text');
   if (xpFill) xpFill.style.width = fill + '%';
   if (ageText) {
     const idx  = age - 1;
-    const xpS  = AGE_XP_TABLE[idx] || 0;
-    const xpE  = AGE_XP_TABLE[idx + 1];
-    const prog = xpE ? `${player.xp - xpS}/${xpE - xpS}` : 'MAX';
-    ageText.textContent = `AGE ${age}  (${prog} XP)`;
+    const goldS  = AGE_GOLD_TABLE[idx] || 0;
+    const goldE  = AGE_GOLD_TABLE[idx + 1];
+    const prog = goldE ? `${Math.max(0, player.gold - goldS)}/${goldE - goldS}` : 'MAX';
+    ageText.textContent = `AGE ${age}  (${prog} GOLD)`;
   }
 }
 
@@ -12105,11 +12106,11 @@ function die() {
   if (score > prev) {
     localStorage.setItem('fb_best_score', score);
     localStorage.setItem('fb_best_kills', player.kills);
-    localStorage.setItem('fb_best_age', getAge(player.xp));
+    localStorage.setItem('fb_best_age', getAge(player.gold));
     localStorage.setItem('fb_best_name', player.name);
   }
   localStorage.setItem('fb_last_kills', player.kills);
-  localStorage.setItem('fb_last_age', getAge(player.xp));
+  localStorage.setItem('fb_last_age', getAge(player.gold));
   localStorage.setItem('fb_last_gold', player.gold);
   // Update cumulative stats for achievement tracking
   const _prevTotalKills = parseInt(localStorage.getItem('fb_total_kills')||'0', 10);
@@ -12121,7 +12122,7 @@ function die() {
   const _prevTotalGames = parseInt(localStorage.getItem('fb_total_games')||'0', 10);
   localStorage.setItem('fb_total_games', _prevTotalGames + 1);
   const _prevMaxAge = parseInt(localStorage.getItem('fb_max_age')||'1', 10);
-  const _curAge = getAge(player.xp);
+  const _curAge = getAge(player.gold);
   if(_curAge > _prevMaxAge) localStorage.setItem('fb_max_age', _curAge);
   // Mark pending achievements for popup in lobby
   (function(){
@@ -12235,7 +12236,7 @@ function die() {
 
   const isNew = score > prev;
   const timeStr = _fmtTime(globalTime);
-  const age = getAge(player.xp);
+  const age = getAge(player.gold);
   const newTotalGold = prevShopGold + player.gold;
 
   // Killer info banner
@@ -12597,7 +12598,7 @@ function respawn() {
   }
   _campfires.length = 0; // full clear safety: rebuild from remaining buildings
   for (let _bi=0;_bi<buildings.length;_bi++) { if(buildings[_bi].type===10) _campfires.push(buildings[_bi]); }
-  _prevAge = getAge(player.xp); // sync to current XP — prevents false level-up overlay on first kill after respawn
+  _prevAge = getAge(player.gold); // sync to current gold — prevents false level-up overlay after respawn
   _pendingUpgrades.length = 0; // clear stale upgrade queue from previous life
   if (typeof bossTelegraphs !== 'undefined') bossTelegraphs.length = 0; // clear stale boss telegraphs on respawn
   // Reset any casting boss skills so they don't re-fire after respawn
@@ -24701,7 +24702,7 @@ window._shareScoreWithParty = function(){
   var _code = window._getPartyCode();
   var _url  = _base + '?partyCode=' + _code;
   var _kills = (typeof player !== 'undefined' && player.kills) || 0;
-  var _age   = (typeof getAge === 'function' && typeof player !== 'undefined') ? getAge(player.xp) : '?';
+  var _age   = (typeof getAge === 'function' && typeof player !== 'undefined') ? getAge(player.gold) : '?';
   var _time  = (typeof _fmtTime === 'function' && typeof globalTime !== 'undefined') ? _fmtTime(globalTime) : '';
   var isEn = (localStorage.getItem('fb_lang') === 'en');
   var _text  = isEn 
@@ -26081,7 +26082,7 @@ setInterval(function(){
       }
       // Player attacks boss (proximity auto-attack)
       if(bs.aggroed&&pDist<c.bossR+55){
-        var plvl=typeof getAge==='function'?getAge(player.xp||0):1;
+        var plvl=typeof getAge==='function'?getAge(player.gold||0):1;
         var pdmg=(5+plvl*1.5)*dt*6;
         bs.hp-=pdmg;
         bs.dmgFlashFrames=4;
